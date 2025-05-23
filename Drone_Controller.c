@@ -1,94 +1,242 @@
-#include <stdio.h>
-#include "btstack.h"
-#include "pico/cyw43_arch.h"
+#include <string.h>
+#include <stdlib.h>
+
 #include "pico/stdlib.h"
-#include "hardware/adc.h"
+#include "pico/cyw43_arch.h"
 
-#include "lwip/netif.h"
-#include "lwip/ip4_addr.h"
-#include "lwip/apps/lwiperf.h"
+#include "lwip/pbuf.h"
+#include "lwip/tcp.h"
 
-#include "server_common.h"
+#define TCP_PORT 4242
+#define DEBUG_printf printf
+#define BUF_SIZE 2048
+#define TEST_ITERATIONS 10
+#define POLL_TIME_S 5
 
-#define HEARTBEAT_PERIOD_MS 1000
+typedef struct TCP_SERVER_T_ {
+    struct tcp_pcb *server_pcb;
+    struct tcp_pcb *client_pcb;
+    bool complete;
+    uint8_t buffer_sent[BUF_SIZE];
+    uint8_t buffer_recv[BUF_SIZE];
+    int sent_len;
+    int recv_len;
+    int run_count;
+} TCP_SERVER_T;
 
-static void heartbeat_handler(async_context_t *context, async_at_time_worker_t *worker);
-
-static async_at_time_worker_t heartbeat_worker = { .do_work = heartbeat_handler };
-static btstack_packet_callback_registration_t hci_event_callback_registration;
-
-static void heartbeat_handler(async_context_t *context, async_at_time_worker_t *worker) {
-    static uint32_t counter = 0;
-    counter++;
-
-    // Update the temp every 10s
-    if (counter % 10 == 0) {
-        poll_temp();
-        if (le_notification_enabled) {
-            att_server_request_can_send_now_event(con_handle);
-        }
+static TCP_SERVER_T* tcp_server_init(void) {
+    TCP_SERVER_T *state = calloc(1, sizeof(TCP_SERVER_T));
+    if (!state) {
+        DEBUG_printf("failed to allocate state\n");
+        return NULL;
     }
-
-    // Invert the led
-    static int led_on = true;
-    led_on = !led_on;
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
-
-    // Restart timer
-    async_context_add_at_time_worker_in_ms(context, &heartbeat_worker, HEARTBEAT_PERIOD_MS);
+    return state;
 }
 
-// Report IP results and exit
-static void iperf_report(void *arg, enum lwiperf_report_type report_type,
-                         const ip_addr_t *local_addr, u16_t local_port, const ip_addr_t *remote_addr, u16_t remote_port,
-                         u32_t bytes_transferred, u32_t ms_duration, u32_t bandwidth_kbitpsec) {
-    static uint32_t total_iperf_megabytes = 0;
-    uint32_t mbytes = bytes_transferred / 1024 / 1024;
-    float mbits = bandwidth_kbitpsec / 1000.0;
+static err_t tcp_server_close(void *arg) {
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+    err_t err = ERR_OK;
+    if (state->client_pcb != NULL) {
+        tcp_arg(state->client_pcb, NULL);
+        tcp_poll(state->client_pcb, NULL, 0);
+        tcp_sent(state->client_pcb, NULL);
+        tcp_recv(state->client_pcb, NULL);
+        tcp_err(state->client_pcb, NULL);
+        err = tcp_close(state->client_pcb);
+        if (err != ERR_OK) {
+            DEBUG_printf("close failed %d, calling abort\n", err);
+            tcp_abort(state->client_pcb);
+            err = ERR_ABRT;
+        }
+        state->client_pcb = NULL;
+    }
+    if (state->server_pcb) {
+        tcp_arg(state->server_pcb, NULL);
+        tcp_close(state->server_pcb);
+        state->server_pcb = NULL;
+    }
+    return err;
+}
 
-    total_iperf_megabytes += mbytes;
+static err_t tcp_server_result(void *arg, int status) {
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+    if (status == 0) {
+        DEBUG_printf("test success\n");
+    } else {
+        DEBUG_printf("test failed %d\n", status);
+    }
+    state->complete = true;
+    return tcp_server_close(arg);
+}
 
-    printf("Completed iperf transfer of %u MBytes @ %.1f Mbits/sec\n", mbytes, mbits);
-    printf("Total iperf megabytes since start %u Mbytes\n", total_iperf_megabytes);
+static err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+    DEBUG_printf("tcp_server_sent %u\n", len);
+    state->sent_len += len;
+
+    if (state->sent_len >= BUF_SIZE) {
+
+        // We should get the data back from the client
+        state->recv_len = 0;
+        DEBUG_printf("Waiting for buffer from client\n");
+    }
+
+    return ERR_OK;
+}
+
+err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb)
+{
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+    for(int i=0; i< BUF_SIZE; i++) {
+        state->buffer_sent[i] = rand();
+    }
+
+    state->sent_len = 0;
+    DEBUG_printf("Writing %ld bytes to client\n", BUF_SIZE);
+    // this method is callback from lwIP, so cyw43_arch_lwip_begin is not required, however you
+    // can use this method to cause an assertion in debug mode, if this method is called when
+    // cyw43_arch_lwip_begin IS needed
+    cyw43_arch_lwip_check();
+    err_t err = tcp_write(tpcb, state->buffer_sent, BUF_SIZE, TCP_WRITE_FLAG_COPY);
+    if (err != ERR_OK) {
+        DEBUG_printf("Failed to write data %d\n", err);
+        return tcp_server_result(arg, -1);
+    }
+    return ERR_OK;
+}
+
+err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+    if (!p) {
+        return tcp_server_result(arg, -1);
+    }
+    // this method is callback from lwIP, so cyw43_arch_lwip_begin is not required, however you
+    // can use this method to cause an assertion in debug mode, if this method is called when
+    // cyw43_arch_lwip_begin IS needed
+    cyw43_arch_lwip_check();
+    if (p->tot_len > 0) {
+        DEBUG_printf("tcp_server_recv %d/%d err %d\n", p->tot_len, state->recv_len, err);
+
+        // Receive the buffer
+        const uint16_t buffer_left = BUF_SIZE - state->recv_len;
+        state->recv_len += pbuf_copy_partial(p, state->buffer_recv + state->recv_len,
+                                             p->tot_len > buffer_left ? buffer_left : p->tot_len, 0);
+        tcp_recved(tpcb, p->tot_len);
+    }
+    pbuf_free(p);
+
+    // Have we have received the whole buffer
+    if (state->recv_len == BUF_SIZE) {
+
+        // check it matches
+        if (memcmp(state->buffer_sent, state->buffer_recv, BUF_SIZE) != 0) {
+            DEBUG_printf("buffer mismatch\n");
+            return tcp_server_result(arg, -1);
+        }
+        DEBUG_printf("tcp_server_recv buffer ok\n");
+
+        // Test complete?
+        state->run_count++;
+        if (state->run_count >= TEST_ITERATIONS) {
+            tcp_server_result(arg, 0);
+            return ERR_OK;
+        }
+
+        // Send another buffer
+        return tcp_server_send_data(arg, state->client_pcb);
+    }
+    return ERR_OK;
+}
+
+static err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb) {
+    DEBUG_printf("tcp_server_poll_fn\n");
+    return tcp_server_result(arg, -1); // no response is an error?
+}
+
+static void tcp_server_err(void *arg, err_t err) {
+    if (err != ERR_ABRT) {
+        DEBUG_printf("tcp_client_err_fn %d\n", err);
+        tcp_server_result(arg, err);
+    }
+}
+
+static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+    if (err != ERR_OK || client_pcb == NULL) {
+        DEBUG_printf("Failure in accept\n");
+        tcp_server_result(arg, err);
+        return ERR_VAL;
+    }
+    DEBUG_printf("Client connected\n");
+
+    state->client_pcb = client_pcb;
+    tcp_arg(client_pcb, state);
+    tcp_sent(client_pcb, tcp_server_sent);
+    tcp_recv(client_pcb, tcp_server_recv);
+    tcp_poll(client_pcb, tcp_server_poll, POLL_TIME_S * 2);
+    tcp_err(client_pcb, tcp_server_err);
+
+    return tcp_server_send_data(arg, state->client_pcb);
+}
+
+static bool tcp_server_open(void *arg) {
+    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+    DEBUG_printf("Starting server at %s on port %u\n", ip4addr_ntoa(netif_ip4_addr(netif_list)), TCP_PORT);
+
+    struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
+    if (!pcb) {
+        DEBUG_printf("failed to create pcb\n");
+        return false;
+    }
+
+    err_t err = tcp_bind(pcb, NULL, TCP_PORT);
+    if (err) {
+        DEBUG_printf("failed to bind to port %u\n", TCP_PORT);
+        return false;
+    }
+
+    state->server_pcb = tcp_listen_with_backlog(pcb, 1);
+    if (!state->server_pcb) {
+        DEBUG_printf("failed to listen\n");
+        if (pcb) {
+            tcp_close(pcb);
+        }
+        return false;
+    }
+
+    tcp_arg(state->server_pcb, state);
+    tcp_accept(state->server_pcb, tcp_server_accept);
+
+    return true;
+}
+
+void run_tcp_server_test(void) {
+    TCP_SERVER_T *state = tcp_server_init();
+    if (!state) {
+        return;
+    }
+    if (!tcp_server_open(state)) {
+        tcp_server_result(state, -1);
+        return;
+    }
+    while(!state->complete) {
+        // This sleep is just an example of some (blocking)
+        // work you might be doing.
+        sleep_ms(1000);
+    }
+    free(state);
 }
 
 int main() {
     stdio_init_all();
-    stdio_getchar();
-    printf("\n\n");
-    printf("BTstack + lwIP + iperf example\n");
-    printf("Using CYW43 Wi-Fi + Bluetooth chip\n");
-    printf("Starting\n");
 
-    // initialize CYW43 architecture
-    //   - will enable BT if CYW43_ENABLE_BLUETOOTH == 1
-    //   - will enable lwIP if CYW43_LWIP == 1
     if (cyw43_arch_init()) {
-        printf("failed to initialise cyw43_arch\n");
-        return -1;
+        printf("failed to initialise\n");
+        return 1;
     }
 
-    // Initialise adc for the temp sensor
-    adc_init();
-    adc_select_input(ADC_CHANNEL_TEMPSENSOR);
-    adc_set_temp_sensor_enabled(true);
-
-    l2cap_init();
-    sm_init();
-    att_server_init(profile_data, att_read_callback, att_write_callback);    
-
-    // inform about BTstack state
-    hci_event_callback_registration.callback = &packet_handler;
-    hci_add_event_handler(&hci_event_callback_registration);
-
-    // register for ATT event
-    att_server_register_packet_handler(packet_handler);
-
-    // use an async worker for for the led
-    async_context_add_at_time_worker_in_ms(cyw43_arch_async_context(), &heartbeat_worker, HEARTBEAT_PERIOD_MS);
-
-    // Connect to Wi-Fi
     cyw43_arch_enable_sta_mode();
+
     printf("Connecting to Wi-Fi...\n");
     if (cyw43_arch_wifi_connect_timeout_ms("DeFord_5", "jaggedsky483", CYW43_AUTH_WPA2_AES_PSK, 30000)) {
         printf("failed to connect.\n");
@@ -96,21 +244,7 @@ int main() {
     } else {
         printf("Connected.\n");
     }
-
-    // setup iperf
-    cyw43_arch_lwip_begin();
-    printf("\nReady, running iperf server at %s\n", ip4addr_ntoa(netif_ip4_addr(netif_list)));
-    lwiperf_start_tcp_server_default(&iperf_report, NULL);
-    cyw43_arch_lwip_end();
-
-    // turn on bluetooth!
-    hci_power_control(HCI_POWER_ON);
-
-    // For threadsafe background we can just enter a loop
-    while(true) {
-        sleep_ms(1000);
-    }
-
+    run_tcp_server_test();
     cyw43_arch_deinit();
     return 0;
 }

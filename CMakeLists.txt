@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Drone_Controller Drone_Controller.c server_common.c)
+add_executable(Drone_Controller Drone_Controller.c)
 
 pico_set_program_name(Drone_Controller "Drone_Controller")
 pico_set_program_version(Drone_Controller "0.1")
@@ -43,28 +43,16 @@ pico_set_program_version(Drone_Controller "0.1")
 # Add the standard library to the build
 target_link_libraries(Drone_Controller
     pico_stdlib
-    pico_btstack_ble
-    pico_btstack_cyw43
     pico_cyw43_arch_lwip_threadsafe_background
-    pico_lwip_iperf
     hardware_adc
 )
-
-pico_btstack_make_gatt_header(Drone_Controller PRIVATE "${CMAKE_CURRENT_LIST_DIR}/temp_sensor.gatt")
 
 # Add the standard include files to the build
 target_include_directories(Drone_Controller PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
 )
 
-target_compile_definitions(Drone_Controller PRIVATE
-    RUNNING_AS_CLIENT=1
-)
-
-target_compile_definitions(Drone_Controller PRIVATE
-    WIFI_SSID=\"${WIFI_SSID}\"
-    WIFI_PASSWORD=\"${WIFI_PASSWORD}\"
-)
+target_compile_definitions(Drone_Controller PRIVATE)
 
 pico_add_extra_outputs(Drone_Controller)
 
