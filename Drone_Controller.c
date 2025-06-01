@@ -7,11 +7,15 @@
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
 
+#include "dhcpserver.h"
+
 #define TCP_PORT 4242
 #define DEBUG_printf printf
 #define BUF_SIZE 2048
 #define TEST_ITERATIONS 10
 #define POLL_TIME_S 5
+
+#define StationMode 1
 
 typedef struct TCP_SERVER_T_ {
     struct tcp_pcb *server_pcb;
@@ -26,6 +30,8 @@ enum HeaderType_T_ {
 	HeartBeat = 0,
     RequestDroneData = 1,
 	DroneData = 2,
+
+    Disconnect = 100
 };
 
 
@@ -85,6 +91,15 @@ err_t tcp_server_send_data(void* data, int length, struct tcp_pcb *tpcb) {
     return tcp_write(tpcb, data, length, TCP_WRITE_FLAG_COPY);
 }
 
+err_t tcp_server_send_header(Header_T header, struct tcp_pcb *tpcb) {
+    DEBUG_printf("Writing header %d to client\n", header.type);
+    // this method is callback from lwIP, so cyw43_arch_lwip_begin is not required, however you
+    // can use this method to cause an assertion in debug mode, if this method is called when
+    // cyw43_arch_lwip_begin IS needed
+    cyw43_arch_lwip_check();
+    return tcp_write(tpcb, &header, sizeof(header), TCP_WRITE_FLAG_COPY);
+}
+
 err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
     if (!p) {
@@ -132,9 +147,7 @@ static err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb) {
 
     //Make sure the client is still connected
     if(state->heartbeat_received) {
-        static Header_T header = {HeartBeat};
-
-        tcp_server_send_data(&header, sizeof(header), tpcb);
+        tcp_server_send_header((Header_T){HeartBeat}, tpcb);
         state->heartbeat_received = false;
         return ERR_OK;
     } else {
@@ -221,6 +234,10 @@ void run_tcp_server(void) {
         sleep_ms(1000);
     }
 
+    tcp_server_send_header((Header_T){Disconnect}, state->client_pcb);
+    tcp_output(state->client_pcb);
+    sleep_ms(1000);
+
     DEBUG_printf("Closing server\n");
     tcp_server_close(state);
     free(state);
@@ -235,15 +252,30 @@ int main() {
         return 1;
     }
 
+#if !StationMode
+    printf("Starting Access Point...\n");
+    cyw43_arch_enable_ap_mode("Drone Controller", "jaggedsky483", CYW43_AUTH_WPA2_AES_PSK);
+
+    ip4_addr_t current_ip;
+    current_ip.addr = PP_HTONL(CYW43_DEFAULT_IP_AP_ADDRESS);
+    
+    ip4_addr_t mask;
+    mask.addr = PP_HTONL(CYW43_DEFAULT_IP_MASK);
+
+    dhcp_server_t dhcp_server;
+    dhcp_server_init(&dhcp_server, &current_ip, &mask);
+#else
+    printf("Starting Wifi Station...\n");
     cyw43_arch_enable_sta_mode();
 
-    printf("Connecting to Wi-Fi...\n");
     if (cyw43_arch_wifi_connect_timeout_ms("DeFord_5", "jaggedsky483", CYW43_AUTH_WPA2_AES_PSK, 30000)) {
         printf("failed to connect.\n");
         return 1;
     } else {
         printf("Connected.\n");
     }
+
+#endif
     run_tcp_server();
     cyw43_arch_deinit();
     return 0;

@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Drone_Controller Drone_Controller.c)
+add_executable(Drone_Controller Drone_Controller.c dhcpserver.h dhcpserver.c)
 
 pico_set_program_name(Drone_Controller "Drone_Controller")
 pico_set_program_version(Drone_Controller "0.1")
