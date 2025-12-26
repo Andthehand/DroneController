@@ -9,6 +9,9 @@
 
 #include "dhcpserver.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 #define TCP_PORT 4242
 #define DEBUG_printf printf
 #define BUF_SIZE 2048
@@ -228,31 +231,24 @@ void run_tcp_server(void) {
         DEBUG_printf("failed to open server\n");
         return;
     }
+    
     while(state->isConnected) {
         // This sleep is just an example of some (blocking)
         // work you might be doing.
-        sleep_ms(1000);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 
     tcp_server_send_header((Header_T){Disconnect}, state->client_pcb);
     tcp_output(state->client_pcb);
-    sleep_ms(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
 
     DEBUG_printf("Closing server\n");
     tcp_server_close(state);
     free(state);
 }
 
-int main() {
-    stdio_init_all();
-    sleep_ms(1000);
-
-    if (cyw43_arch_init()) {
-        printf("failed to initialise\n");
-        return 1;
-    }
-
-#if !StationMode
+void main_task(__unused void *params) {
+    #if !StationMode
     printf("Starting Access Point...\n");
     cyw43_arch_enable_ap_mode("Drone Controller", "jaggedsky483", CYW43_AUTH_WPA2_AES_PSK);
 
@@ -270,7 +266,7 @@ int main() {
 
     if (cyw43_arch_wifi_connect_timeout_ms("DeFord_5", "jaggedsky483", CYW43_AUTH_WPA2_AES_PSK, 30000)) {
         printf("failed to connect.\n");
-        return 1;
+        return;
     } else {
         printf("Connected.\n");
     }
@@ -278,5 +274,25 @@ int main() {
 #endif
     run_tcp_server();
     cyw43_arch_deinit();
+}
+
+void vLaunch( void) {
+    TaskHandle_t task;
+    xTaskCreate(main_task, "TestMainThread", 4096, NULL, tskIDLE_PRIORITY +  1UL, &task);
+
+    // we must bind the main task to one core (well at least while the init is called)
+    // (note we only do this in NO_SYS mode, because cyw43_arch_freertos
+    // takes care of it otherwise)
+    vTaskCoreAffinitySet(task, 1);
+
+    /* Start the tasks and timer running. */
+    vTaskStartScheduler();
+}
+
+int main() {
+    stdio_init_all();
+
+    vLaunch();
+
     return 0;
 }
