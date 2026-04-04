@@ -8,6 +8,7 @@
 #include "lwip/tcp.h"
 
 #include "dhcpserver.h"
+#include "bmi270.h"
 
 #define TCP_PORT 4242
 #define DEBUG_printf printf
@@ -246,6 +247,14 @@ void run_tcp_server(void) {
 int main() {
     stdio_init_all();
     sleep_ms(1000);
+
+    bool init_bmi270_success = init_bmi270();
+    if (!init_bmi270_success) {
+        printf("Failed to initialize BMI270\n");
+        return 1;
+    } else {
+        printf("BMI270 initialized successfully\n");
+    }
 
     if (cyw43_arch_init()) {
         printf("failed to initialise\n");

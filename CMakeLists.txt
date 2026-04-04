@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Drone_Controller Drone_Controller.c dhcpserver.h dhcpserver.c)
+add_executable(Drone_Controller Drone_Controller.c dhcpserver.h dhcpserver.c bmi270.h bmi270.c)
 
 pico_set_program_name(Drone_Controller "Drone_Controller")
 pico_set_program_version(Drone_Controller "0.1")
@@ -45,6 +45,7 @@ target_link_libraries(Drone_Controller
     pico_stdlib
     pico_cyw43_arch_lwip_threadsafe_background
     hardware_adc
+    hardware_spi
 )
 
 # Add the standard include files to the build
