@@ -37,15 +37,7 @@ pico_sdk_init()
 
 add_executable(Drone_Controller
     Drone_Controller.c
-    app_state.c
-    app_safety.c
-    imu_service.c
-    net_control.c
-    net_http.c
-    platform_startup.c
-    wifi_manager.c
-    dhcpserver.c
-    bmi270.c
+    networking.c
 )
 
 pico_set_program_name(Drone_Controller "Drone_Controller")
@@ -55,8 +47,15 @@ pico_set_program_version(Drone_Controller "0.1")
 target_link_libraries(Drone_Controller
     pico_stdlib
     pico_cyw43_arch_lwip_threadsafe_background
-    hardware_adc
-    hardware_spi
+    pico_lwip_http
+    pico_httpd_content
+    pico_multicore
+)
+
+pico_add_library(pico_httpd_content NOFLAG)
+pico_set_lwip_httpd_content(pico_httpd_content INTERFACE
+        ${CMAKE_CURRENT_LIST_DIR}/content/404.html
+        ${CMAKE_CURRENT_LIST_DIR}/content/index.html
 )
 
 # Add the standard include files to the build
@@ -65,6 +64,11 @@ target_include_directories(Drone_Controller PRIVATE
 )
 
 target_compile_definitions(Drone_Controller PRIVATE)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND arm-none-eabi-size $<TARGET_FILE:${PROJECT_NAME}>
+    COMMENT "Current Flash and RAM usage:"
+)
 
 pico_add_extra_outputs(Drone_Controller)
 

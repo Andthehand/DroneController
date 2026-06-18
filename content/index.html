@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quadcopter Viewer</title>
+
+<style>
+    body {
+        margin: 0;
+        overflow: hidden;
+        background: #111;
+        color: white;
+        font-family: Arial, sans-serif;
+    }
+
+    #overlay {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: rgba(0,0,0,0.6);
+        padding: 10px;
+        border-radius: 5px;
+        z-index: 100;
+    }
+</style>
+</head>
+<body>
+
+<div id="overlay">
+    <div>Pitch: <span id="pitch">0.0</span>°</div>
+    <div>Roll: <span id="roll">0.0</span>°</div>
+    <div>Yaw: <span id="yaw">0.0</span>°</div>
+</div>
+
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.180.0/build/three.module.js';
+
+// ---------------- Scene ----------------
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x111111);
+
+const camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    1000
+);
+
+camera.position.set(5, 4, 6);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({
+    antialias: true
+});
+
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// ---------------- Lights ----------------
+
+scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+
+const sun = new THREE.DirectionalLight(0xffffff, 2);
+sun.position.set(5, 10, 5);
+scene.add(sun);
+
+// ---------------- Ground ----------------
+
+const grid = new THREE.GridHelper(20, 20);
+scene.add(grid);
+
+// ---------------- Quadcopter ----------------
+
+const quad = new THREE.Group();
+scene.add(quad);
+
+// Frame Material
+
+const frameMat = new THREE.MeshStandardMaterial({
+    color: 0x00aaff,
+    metalness: 0.3,
+    roughness: 0.6
+});
+
+// Body
+
+const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.9, 0.25, 0.9),
+    frameMat
+);
+
+quad.add(body);
+
+// Flight Controller Stack
+
+const stack = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.2, 0.5),
+    new THREE.MeshStandardMaterial({
+        color: 0x333333
+    })
+);
+
+stack.position.y = 0.25;
+quad.add(stack);
+
+// Arms
+
+const armLength = 4.0;
+const armThickness = 0.12;
+
+const arm1 = new THREE.Mesh(
+    new THREE.BoxGeometry(armLength, armThickness, armThickness),
+    frameMat
+);
+arm1.rotation.y = Math.PI / 4;
+quad.add(arm1);
+
+const arm2 = new THREE.Mesh(
+    new THREE.BoxGeometry(armLength, armThickness, armThickness),
+    frameMat
+);
+arm2.rotation.y = -Math.PI / 4;
+quad.add(arm2);
+
+// Motors + Props
+
+const motors = [];
+const props = [];
+
+function addMotor(x, z, clockwise)
+{
+    const motor = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.18, 0.18, 32),
+        new THREE.MeshStandardMaterial({
+            color: 0xff4444
+        })
+    );
+
+    motor.position.set(x, 0, z);
+    quad.add(motor);
+    motors.push(motor);
+
+    const prop = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.65, 0.65, 0.02, 32),
+        new THREE.MeshStandardMaterial({
+            color: 0xdddddd,
+            transparent: true,
+            opacity: 0.8
+        })
+    );
+
+    prop.position.set(x, 0.12, z);
+
+    prop.userData.clockwise = clockwise;
+
+    quad.add(prop);
+    props.push(prop);
+}
+
+const d = 1.4;
+
+// Front Right
+addMotor( d,  d, true);
+
+// Front Left
+addMotor(-d,  d, false);
+
+// Rear Right
+addMotor( d, -d, false);
+
+// Rear Left
+addMotor(-d, -d, true);
+
+// Camera
+
+const fpvCam = new THREE.Mesh(
+    new THREE.BoxGeometry(0.25, 0.25, 0.25),
+    new THREE.MeshStandardMaterial({
+        color: 0xffff00
+    })
+);
+
+fpvCam.position.set(0, 0.2, 0.55);
+quad.add(fpvCam);
+
+// ---------------- Telemetry ----------------
+
+let pitch = 0;
+let roll = 0;
+let yaw = 0;
+
+// Simulated motion for testing
+
+setInterval(() => {
+
+    pitch = Math.sin(Date.now() * 0.001) * 20;
+    roll  = Math.cos(Date.now() * 0.0015) * 15;
+    yaw += 0.3;
+
+    document.getElementById("pitch").textContent =
+        pitch.toFixed(1);
+
+    document.getElementById("roll").textContent =
+        roll.toFixed(1);
+
+    document.getElementById("yaw").textContent =
+        yaw.toFixed(1);
+
+}, 20);
+
+/*
+---------------------------------
+PICO WEBSOCKET EXAMPLE
+
+const ws = new WebSocket("ws://192.168.1.50/ws");
+
+ws.onmessage = (event) =>
+{
+    const data = JSON.parse(event.data);
+
+    pitch = data.pitch;
+    roll  = data.roll;
+    yaw   = data.yaw;
+};
+---------------------------------
+*/
+
+// ---------------- Animation ----------------
+
+function animate()
+{
+    requestAnimationFrame(animate);
+
+    quad.rotation.x =
+        THREE.MathUtils.degToRad(pitch);
+
+    quad.rotation.z =
+        THREE.MathUtils.degToRad(roll);
+
+    quad.rotation.y =
+        THREE.MathUtils.degToRad(yaw);
+
+    // Spin props
+
+    for (const prop of props)
+    {
+        prop.rotation.y +=
+            prop.userData.clockwise ? 0.6 : -0.6;
+    }
+
+    renderer.render(scene, camera);
+}
+
+animate();
+
+// ---------------- Resize ----------------
+
+window.addEventListener('resize', () =>
+{
+    camera.aspect =
+        window.innerWidth / window.innerHeight;
+
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
+});
+</script>
+
+</body>
+</html>

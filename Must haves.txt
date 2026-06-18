@@ -1,7 +1,0 @@
-Coulomb counter: for checking battery percentage
-4-1 ESC pico-dshot or picoDshotBidir Speedybee Mini F405
-Barometer
-status leds
-ENABLE OVERSAMPLING IN BMI270!!!!!
-
-Add battery straps
