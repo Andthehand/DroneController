@@ -3,11 +3,22 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "pico/sync.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/apps/httpd.h"
 
 #include "config.h"
 #include "ws_server.h"
+
+typedef struct {
+    float pitch_deg;
+    float roll_deg;
+    float yaw_deg;
+    bool ready;
+} telemetry_state_t;
+
+static critical_section_t s_telemetry_lock;
+static telemetry_state_t s_telemetry = {0.0f, 0.0f, 0.0f, false};
 
 void init_networking() {
     printf("Initializing networking...\n");
@@ -49,28 +60,49 @@ void deinit_networking() {
     cyw43_arch_deinit();
 }
 
+void networking_set_telemetry(float pitch_deg, float roll_deg, float yaw_deg) {
+    critical_section_enter_blocking(&s_telemetry_lock);
+    s_telemetry.pitch_deg = pitch_deg;
+    s_telemetry.roll_deg = roll_deg;
+    s_telemetry.yaw_deg = yaw_deg;
+    s_telemetry.ready = true;
+    critical_section_exit(&s_telemetry_lock);
+}
+
+void networking_get_telemetry(float *pitch_deg, float *roll_deg, float *yaw_deg) {
+    critical_section_enter_blocking(&s_telemetry_lock);
+    if (pitch_deg != NULL) {
+        *pitch_deg = s_telemetry.pitch_deg;
+    }
+    if (roll_deg != NULL) {
+        *roll_deg = s_telemetry.roll_deg;
+    }
+    if (yaw_deg != NULL) {
+        *yaw_deg = s_telemetry.yaw_deg;
+    }
+    critical_section_exit(&s_telemetry_lock);
+}
+
+bool networking_telemetry_ready(void) {
+    bool ready;
+    critical_section_enter_blocking(&s_telemetry_lock);
+    ready = s_telemetry.ready;
+    critical_section_exit(&s_telemetry_lock);
+    return ready;
+}
+
 void networking_thread() {
     init_networking();
 
-    float pitch = 0.0f;
-    float roll = 0.0f;
-    float yaw = 0.0f;
     absolute_time_t last_send = get_absolute_time();
 
     while (true) {
         if (absolute_time_diff_us(last_send, get_absolute_time()) >= 40000) {
-            pitch += 0.8f;
-            roll += 0.5f;
-            yaw += 1.2f;
-
-            if (pitch > 25.0f) {
-                pitch = -25.0f;
-            }
-            if (roll > 20.0f) {
-                roll = -20.0f;
-            }
-            if (yaw > 360.0f) {
-                yaw -= 360.0f;
+            float pitch = 0.0f;
+            float roll = 0.0f;
+            float yaw = 0.0f;
+            if (networking_telemetry_ready()) {
+                networking_get_telemetry(&pitch, &roll, &yaw);
             }
 
             cyw43_arch_lwip_begin();
@@ -85,5 +117,6 @@ void networking_thread() {
 }
 
 void setup_networking_thread() {
+    critical_section_init(&s_telemetry_lock);
     multicore_launch_core1(networking_thread);
 }

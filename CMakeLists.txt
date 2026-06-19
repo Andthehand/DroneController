@@ -33,14 +33,20 @@ project(Drone_Controller C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-# Add executable. Default name is the project name, version 0.1
+add_subdirectory(external/pico-bidir-dshot)
 
+# Add executable. Default name is the project name, version 0.1
 add_executable(Drone_Controller
     Drone_Controller.c
     LSM6DSV32X.c
+    kalman_filter.c
     networking.c
     ws_server.c
+    ESC.c
 )
+
+# The bidirectional DShot library is C++; compile ESC.c as C++ so it can include PIO_DShot.h.
+set_source_files_properties(ESC.c PROPERTIES LANGUAGE CXX)
 
 pico_set_program_name(Drone_Controller "Drone_Controller")
 pico_set_program_version(Drone_Controller "0.1")
@@ -53,6 +59,7 @@ target_link_libraries(Drone_Controller
     pico_lwip_http
     pico_httpd_content
     pico_multicore
+    Pico_Bidir_DShot
 )
 
 pico_add_library(pico_httpd_content NOFLAG)

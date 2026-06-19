@@ -21,10 +21,15 @@
 #define LSM6_REG_CTRL1_XL 0x10
 #define LSM6_REG_CTRL2_G  0x11
 #define LSM6_REG_CTRL3_C  0x12
+#define LSM6_REG_CTRL6    0x15
+#define LSM6_REG_CTRL7    0x16
+#define LSM6_REG_CTRL8    0x17
 #define LSM6_REG_OUTX_L_G 0x22
 #define LSM6_REG_OUTX_L_A 0x28
 
 #define LSM6_READ_MASK 0x80
+
+#define LSM6_WHO_AM_I_EXPECTED 0x70
 
 #define LSM6_CTRL3_BDU    (1u << 6)
 #define LSM6_CTRL3_IF_INC (1u << 2)
@@ -33,10 +38,16 @@
 #define LSM6_ACCEL_SCALE_G_PER_LSB (0.000244f)
 #define LSM6_GYRO_SCALE_DPS_PER_LSB (0.07f)
 
-/* CTRL1_XL: ODR=1.66 kHz, FS=+-8 g. */
-#define LSM6_CTRL1_XL_VALUE 0x8C
-/* CTRL2_G: ODR=1.66 kHz, FS=+-2000 dps. */
-#define LSM6_CTRL2_G_VALUE 0x8C
+/* CTRL1 (10h): HP mode + ODR_XL=1.92 kHz. FS_XL is configured in CTRL8 (17h). */
+#define LSM6_CTRL1_XL_VALUE 0x0A
+/* CTRL2 (11h): HP mode + ODR_G=1.92 kHz. FS_G is configured in CTRL6 (15h). */
+#define LSM6_CTRL2_G_VALUE 0x0A
+/* CTRL6 (15h): LPF1_G_BW=010 and FS_G=0100 (+-2000 dps). */
+#define LSM6_CTRL6_VALUE 0x24
+/* CTRL7 (16h): LPF1_G_EN=1. */
+#define LSM6_CTRL7_VALUE 0x01
+/* CTRL8 (17h): bit2 must be 1; FS_XL=01 (+-8 g), dual-channel disabled. */
+#define LSM6_CTRL8_VALUE 0x05
 
 static bool s_initialized = false;
 static float s_gyro_bias_dps[3] = {0.0f, 0.0f, 0.0f};
@@ -102,9 +113,17 @@ bool lsm6dsv32x_init(void) {
 
 	sleep_ms(10);
 
+	uint8_t who_am_i = lsm6dsv32x_read_who_am_i();
+	printf("LSM6 WHO_AM_I: 0x%02X\n", who_am_i);
+	if (who_am_i != LSM6_WHO_AM_I_EXPECTED) {
+		/* LSM6DSV32X datasheet: WHO_AM_I is fixed to 0x70. */
+		return false;
+	}
+
 	/*
 	 * CTRL3_C: enable block data update and register auto-increment.
-	 * CTRL1_XL/CTRL2_G: 1.66 kHz output data rate for fast quad rate loops.
+	 * CTRL1/CTRL2: 1.92 kHz output data rate in high-performance mode.
+	 * CTRL6/CTRL7/CTRL8: gyro FS/filter and accel FS per datasheet register map.
 	 */
 	if (!lsm6_write_reg(LSM6_REG_CTRL3_C, (uint8_t)(LSM6_CTRL3_BDU | LSM6_CTRL3_IF_INC))) {
 		return false;
@@ -113,6 +132,15 @@ bool lsm6dsv32x_init(void) {
 		return false;
 	}
 	if (!lsm6_write_reg(LSM6_REG_CTRL2_G, LSM6_CTRL2_G_VALUE)) {
+		return false;
+	}
+	if (!lsm6_write_reg(LSM6_REG_CTRL6, LSM6_CTRL6_VALUE)) {
+		return false;
+	}
+	if (!lsm6_write_reg(LSM6_REG_CTRL7, LSM6_CTRL7_VALUE)) {
+		return false;
+	}
+	if (!lsm6_write_reg(LSM6_REG_CTRL8, LSM6_CTRL8_VALUE)) {
 		return false;
 	}
 
