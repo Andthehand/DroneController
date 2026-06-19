@@ -32,6 +32,8 @@
     <div>Roll: <span id="roll">0.0</span>°</div>
     <div>Yaw: <span id="yaw">0.0</span>°</div>
     <div>Link: <span id="ws-status">connecting...</span></div>
+    <div>Pad: <span id="pad-status">searching...</span></div>
+    <div>Cmd: T <span id="cmd-throttle">0.00</span> R <span id="cmd-roll">0.00</span> P <span id="cmd-pitch">0.00</span> Y <span id="cmd-yaw">0.00</span></div>
 </div>
 
 <script type="module">
@@ -191,14 +193,127 @@ quad.add(fpvCam);
 let pitch = 0;
 let roll = 0;
 let yaw = 0;
+let activeGamepadIndex = null;
+let gamepadSeq = 0;
+let lastGamepadSendMs = 0;
+let gamepadStatusText = "searching...";
+
+const gamepadDisplay = {
+    throttle: 0,
+    roll: 0,
+    pitch: 0,
+    yaw: 0,
+    buttons: 0,
+    connected: false
+};
 
 const wsStatus = document.getElementById("ws-status");
+const padStatus = document.getElementById("pad-status");
 let reconnectDelayMs = 500;
 let ws = null;
 
 function setStatus(text)
 {
     wsStatus.textContent = text;
+}
+
+function setPadStatus(text)
+{
+    gamepadStatusText = text;
+    padStatus.textContent = text;
+}
+
+function applyDeadzone(value, deadzone)
+{
+    if (Math.abs(value) < deadzone) return 0;
+    return value;
+}
+
+function clamp(value, min, max)
+{
+    return Math.min(max, Math.max(min, value));
+}
+
+function currentGamepad()
+{
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+
+    if (activeGamepadIndex !== null) {
+        const active = pads[activeGamepadIndex];
+        if (active && active.connected) {
+            return active;
+        }
+    }
+
+    for (const pad of pads) {
+        if (pad && pad.connected) {
+            activeGamepadIndex = pad.index;
+            return pad;
+        }
+    }
+
+    activeGamepadIndex = null;
+    return null;
+}
+
+function buttonsToMask(buttons)
+{
+    const map = [0, 1, 2, 3, 4, 5, 8, 9, 10, 11];
+    let mask = 0;
+    for (let i = 0; i < map.length; i++) {
+        if (buttons[map[i]]?.pressed) {
+            mask |= (1 << i);
+        }
+    }
+    return mask >>> 0;
+}
+
+function updateGamepadState()
+{
+    const pad = currentGamepad();
+    if (!pad) {
+        gamepadDisplay.connected = false;
+        gamepadDisplay.throttle = 0;
+        gamepadDisplay.roll = 0;
+        gamepadDisplay.pitch = 0;
+        gamepadDisplay.yaw = 0;
+        gamepadDisplay.buttons = 0;
+        setPadStatus("not connected");
+        return;
+    }
+
+    const leftY = applyDeadzone(pad.axes[1] ?? 0, 0.08);
+    const rightY = applyDeadzone(pad.axes[3] ?? 0, 0.08);
+    const rightX = applyDeadzone(pad.axes[2] ?? 0, 0.08);
+
+    gamepadDisplay.connected = true;
+    gamepadDisplay.throttle = clamp((-leftY + 1) * 0.5, 0, 1);
+    gamepadDisplay.roll = 0;
+    gamepadDisplay.pitch = clamp(-rightY, -1, 1);
+    gamepadDisplay.yaw = clamp(rightX, -1, 1);
+    gamepadDisplay.buttons = buttonsToMask(pad.buttons);
+
+    const padName = pad.id.includes("Wireless Controller") ? "PS4" : pad.id;
+    setPadStatus(`${padName} (${pad.mapping || "unknown"})`);
+}
+
+function sendGamepadState(nowMs)
+{
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (nowMs - lastGamepadSendMs < 20) return;
+
+    ws.send(JSON.stringify({
+        t: "gamepad",
+        seq: gamepadSeq++,
+        connected: gamepadDisplay.connected,
+        throttle: gamepadDisplay.throttle,
+        roll: gamepadDisplay.roll,
+        pitch: gamepadDisplay.pitch,
+        yaw: gamepadDisplay.yaw,
+        buttons: gamepadDisplay.buttons
+    }));
+
+    lastGamepadSendMs = nowMs;
 }
 
 function connectWebSocket()
@@ -253,15 +368,46 @@ setInterval(() => {
     document.getElementById("yaw").textContent =
         yaw.toFixed(1);
 
+    document.getElementById("cmd-throttle").textContent =
+        gamepadDisplay.throttle.toFixed(2);
+
+    document.getElementById("cmd-roll").textContent =
+        gamepadDisplay.roll.toFixed(2);
+
+    document.getElementById("cmd-pitch").textContent =
+        gamepadDisplay.pitch.toFixed(2);
+
+    document.getElementById("cmd-yaw").textContent =
+        gamepadDisplay.yaw.toFixed(2);
+
+    padStatus.textContent = gamepadStatusText;
+
 }, 20);
 
 connectWebSocket();
+
+window.addEventListener("gamepadconnected", (event) =>
+{
+    activeGamepadIndex = event.gamepad.index;
+    setPadStatus(`connected: ${event.gamepad.id}`);
+});
+
+window.addEventListener("gamepaddisconnected", (event) =>
+{
+    if (event.gamepad.index === activeGamepadIndex) {
+        activeGamepadIndex = null;
+    }
+    setPadStatus("not connected");
+});
 
 // ---------------- Animation ----------------
 
 function animate()
 {
     requestAnimationFrame(animate);
+
+    updateGamepadState();
+    sendGamepadState(performance.now());
 
     quad.rotation.x =
         THREE.MathUtils.degToRad(pitch);

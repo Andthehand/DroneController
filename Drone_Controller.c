@@ -39,6 +39,7 @@ void main_loop() {
     const float rad_to_deg = 57.2957795f;
     bool filter_seeded = false;
     absolute_time_t last_update = get_absolute_time();
+    absolute_time_t last_controller_log = get_absolute_time();
 
     kalman_1d_init(&roll_kalman, 0.001f, 0.003f, 0.03f);
     kalman_1d_init(&pitch_kalman, 0.001f, 0.003f, 0.03f);
@@ -69,14 +70,25 @@ void main_loop() {
 
         float roll_deg = kalman_1d_update(&roll_kalman, accel_roll_deg, sample.gyro_dps[0], dt_s);
         float pitch_deg = kalman_1d_update(&pitch_kalman, accel_pitch_deg, sample.gyro_dps[1], dt_s);
+
+        if (networking_gamepad_ready()) {
+            networking_gamepad_t gamepad = {0};
+            networking_get_gamepad(&gamepad);
+
+            if (gamepad.connected && absolute_time_diff_us(last_controller_log, now) >= 200000) {
+                printf("Gamepad T=%.2f R=%.2f P=%.2f Y=%.2f B=0x%08lx\n",
+                       gamepad.throttle,
+                       gamepad.roll,
+                       gamepad.pitch,
+                       gamepad.yaw,
+                       (unsigned long)gamepad.buttons);
+                last_controller_log = now;
+            }
+        }
+
         networking_set_telemetry(pitch_deg, roll_deg, 0.0f);
 
-        printf("Attitude (deg): roll=%.2f pitch=%.2f | Accel (g): [%.2f, %.2f, %.2f], Gyro (dps): [%.2f, %.2f, %.2f]\n",
-               roll_deg, pitch_deg,
-               sample.accel_g[0], sample.accel_g[1], sample.accel_g[2],
-               sample.gyro_dps[0], sample.gyro_dps[1], sample.gyro_dps[2]);
-
-        sleep_ms(2);
+        sleep_ms(2); //TODO: remove
     }
 }
 

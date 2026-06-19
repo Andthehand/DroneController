@@ -1,10 +1,12 @@
 #include "ws_server.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
 #include "lwip/tcp.h"
+#include "networking.h"
 
 #define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 #define WS_MAX_HANDSHAKE 1024
@@ -200,6 +202,99 @@ static bool contains_ci(const char *haystack, const char *needle) {
     return false;
 }
 
+static const char *json_find_value_start(const char *json, const char *key) {
+    if (!json || !key) {
+        return NULL;
+    }
+
+    char pattern[32];
+    int pattern_len = snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    if (pattern_len <= 0 || (size_t)pattern_len >= sizeof(pattern)) {
+        return NULL;
+    }
+
+    const char *value = strstr(json, pattern);
+    if (!value) {
+        return NULL;
+    }
+
+    value += pattern_len;
+    while (*value == ' ' || *value == '\t') {
+        ++value;
+    }
+
+    return value;
+}
+
+static bool json_get_float(const char *json, const char *key, float *out) {
+    const char *value = json_find_value_start(json, key);
+    if (!value || !out) {
+        return false;
+    }
+
+    char *end = NULL;
+    float parsed = strtof(value, &end);
+    if (end == value) {
+        return false;
+    }
+
+    *out = parsed;
+    return true;
+}
+
+static bool json_get_u32(const char *json, const char *key, uint32_t *out) {
+    const char *value = json_find_value_start(json, key);
+    if (!value || !out) {
+        return false;
+    }
+
+    char *end = NULL;
+    unsigned long parsed = strtoul(value, &end, 10);
+    if (end == value) {
+        return false;
+    }
+
+    *out = (uint32_t)parsed;
+    return true;
+}
+
+static bool json_get_bool(const char *json, const char *key, bool *out) {
+    const char *value = json_find_value_start(json, key);
+    if (!value || !out) {
+        return false;
+    }
+
+    if (strncmp(value, "true", 4) == 0) {
+        *out = true;
+        return true;
+    }
+
+    if (strncmp(value, "false", 5) == 0) {
+        *out = false;
+        return true;
+    }
+
+    return false;
+}
+
+static void ws_handle_gamepad_payload(const char *json) {
+    float throttle = 0.0f;
+    float roll = 0.0f;
+    float pitch = 0.0f;
+    float yaw = 0.0f;
+    uint32_t buttons = 0;
+    bool connected = false;
+
+    (void)json_get_float(json, "throttle", &throttle);
+    (void)json_get_float(json, "roll", &roll);
+    (void)json_get_float(json, "pitch", &pitch);
+    (void)json_get_float(json, "yaw", &yaw);
+    (void)json_get_u32(json, "buttons", &buttons);
+    (void)json_get_bool(json, "connected", &connected);
+
+    networking_set_gamepad(throttle, roll, pitch, yaw, buttons, connected);
+}
+
 static bool extract_websocket_key(const char *request, char *key, size_t key_size) {
     const char *hdr = strstr(request, "Sec-WebSocket-Key:");
     if (!hdr) {
@@ -375,7 +470,11 @@ static err_t ws_handle_frame(ws_client_t *client, const uint8_t *data, size_t le
             char cmd[126];
             memcpy(cmd, unmasked, payload_len);
             cmd[payload_len] = '\0';
-            printf("WS cmd: %s\n", cmd);
+            if (strstr(cmd, "\"t\":\"gamepad\"") != NULL) {
+                ws_handle_gamepad_payload(cmd);
+            } else {
+                printf("WS cmd: %s\n", cmd);
+            }
             break;
         }
         case 0x8:

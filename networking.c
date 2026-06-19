@@ -17,8 +17,20 @@ typedef struct {
     bool ready;
 } telemetry_state_t;
 
+typedef struct {
+    float throttle;
+    float roll;
+    float pitch;
+    float yaw;
+    uint32_t buttons;
+    bool connected;
+    bool ready;
+} gamepad_state_t;
+
 static critical_section_t s_telemetry_lock;
 static telemetry_state_t s_telemetry = {0.0f, 0.0f, 0.0f, false};
+static critical_section_t s_gamepad_lock;
+static gamepad_state_t s_gamepad = {0.0f, 0.0f, 0.0f, 0.0f, 0u, false, false};
 
 void init_networking() {
     printf("Initializing networking...\n");
@@ -91,6 +103,42 @@ bool networking_telemetry_ready(void) {
     return ready;
 }
 
+void networking_set_gamepad(float throttle, float roll, float pitch, float yaw, uint32_t buttons, bool connected) {
+    critical_section_enter_blocking(&s_gamepad_lock);
+    s_gamepad.throttle = throttle;
+    s_gamepad.roll = roll;
+    s_gamepad.pitch = pitch;
+    s_gamepad.yaw = yaw;
+    s_gamepad.buttons = buttons;
+    s_gamepad.connected = connected;
+    s_gamepad.ready = true;
+    critical_section_exit(&s_gamepad_lock);
+}
+
+void networking_get_gamepad(networking_gamepad_t *state) {
+    if (state == NULL) {
+        return;
+    }
+
+    critical_section_enter_blocking(&s_gamepad_lock);
+    state->throttle = s_gamepad.throttle;
+    state->roll = s_gamepad.roll;
+    state->pitch = s_gamepad.pitch;
+    state->yaw = s_gamepad.yaw;
+    state->buttons = s_gamepad.buttons;
+    state->connected = s_gamepad.connected;
+    state->ready = s_gamepad.ready;
+    critical_section_exit(&s_gamepad_lock);
+}
+
+bool networking_gamepad_ready(void) {
+    bool ready;
+    critical_section_enter_blocking(&s_gamepad_lock);
+    ready = s_gamepad.ready;
+    critical_section_exit(&s_gamepad_lock);
+    return ready;
+}
+
 void networking_thread() {
     init_networking();
 
@@ -118,5 +166,6 @@ void networking_thread() {
 
 void setup_networking_thread() {
     critical_section_init(&s_telemetry_lock);
+    critical_section_init(&s_gamepad_lock);
     multicore_launch_core1(networking_thread);
 }
