@@ -37,6 +37,7 @@ pico_sdk_init()
 
 add_executable(Drone_Controller
     Drone_Controller.c
+    LSM6DSV32X.c
     networking.c
     ws_server.c
 )
@@ -47,6 +48,7 @@ pico_set_program_version(Drone_Controller "0.1")
 # Add the standard library to the build
 target_link_libraries(Drone_Controller
     pico_stdlib
+    hardware_spi
     pico_cyw43_arch_lwip_threadsafe_background
     pico_lwip_http
     pico_httpd_content
