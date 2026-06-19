@@ -31,6 +31,7 @@
     <div>Pitch: <span id="pitch">0.0</span>°</div>
     <div>Roll: <span id="roll">0.0</span>°</div>
     <div>Yaw: <span id="yaw">0.0</span>°</div>
+    <div>Link: <span id="ws-status">connecting...</span></div>
 </div>
 
 <script type="module">
@@ -191,14 +192,58 @@ let pitch = 0;
 let roll = 0;
 let yaw = 0;
 
-// Simulated motion for testing
+const wsStatus = document.getElementById("ws-status");
+let reconnectDelayMs = 500;
+let ws = null;
+
+function setStatus(text)
+{
+    wsStatus.textContent = text;
+}
+
+function connectWebSocket()
+{
+    const url = `ws://${window.location.hostname}:81/ws`;
+    ws = new WebSocket(url);
+
+    ws.addEventListener("open", () =>
+    {
+        reconnectDelayMs = 500;
+        setStatus("online");
+    });
+
+    ws.addEventListener("message", (event) =>
+    {
+        try
+        {
+            const data = JSON.parse(event.data);
+            if (data.t !== "telemetry") return;
+
+            if (typeof data.pitch === "number") pitch = data.pitch;
+            if (typeof data.roll === "number")  roll = data.roll;
+            if (typeof data.yaw === "number")   yaw = data.yaw;
+        }
+        catch (err)
+        {
+            console.warn("Bad WS payload", err);
+        }
+    });
+
+    ws.addEventListener("close", () =>
+    {
+        setStatus("reconnecting...");
+        setTimeout(connectWebSocket, reconnectDelayMs);
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, 5000);
+    });
+
+    ws.addEventListener("error", () =>
+    {
+        setStatus("error");
+        ws.close();
+    });
+}
 
 setInterval(() => {
-
-    pitch = Math.sin(Date.now() * 0.001) * 20;
-    roll  = Math.cos(Date.now() * 0.0015) * 15;
-    yaw += 0.3;
-
     document.getElementById("pitch").textContent =
         pitch.toFixed(1);
 
@@ -210,22 +255,7 @@ setInterval(() => {
 
 }, 20);
 
-/*
----------------------------------
-PICO WEBSOCKET EXAMPLE
-
-const ws = new WebSocket("ws://192.168.1.50/ws");
-
-ws.onmessage = (event) =>
-{
-    const data = JSON.parse(event.data);
-
-    pitch = data.pitch;
-    roll  = data.roll;
-    yaw   = data.yaw;
-};
----------------------------------
-*/
+connectWebSocket();
 
 // ---------------- Animation ----------------
 

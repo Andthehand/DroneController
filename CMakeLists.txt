@@ -38,6 +38,7 @@ pico_sdk_init()
 add_executable(Drone_Controller
     Drone_Controller.c
     networking.c
+    ws_server.c
 )
 
 pico_set_program_name(Drone_Controller "Drone_Controller")

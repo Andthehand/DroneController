@@ -7,6 +7,7 @@
 #include "lwip/apps/httpd.h"
 
 #include "config.h"
+#include "ws_server.h"
 
 void init_networking() {
     printf("Initializing networking...\n");
@@ -38,6 +39,7 @@ void init_networking() {
     // Start the HTTP server
     cyw43_arch_lwip_begin();
     httpd_init();
+    ws_server_init(81);
     cyw43_arch_lwip_end();
 }
 
@@ -50,8 +52,34 @@ void deinit_networking() {
 void networking_thread() {
     init_networking();
 
-    while (true) 
-        tight_loop_contents(); // Placeholder for the actual networking code
+    float pitch = 0.0f;
+    float roll = 0.0f;
+    float yaw = 0.0f;
+    absolute_time_t last_send = get_absolute_time();
+
+    while (true) {
+        if (absolute_time_diff_us(last_send, get_absolute_time()) >= 40000) {
+            pitch += 0.8f;
+            roll += 0.5f;
+            yaw += 1.2f;
+
+            if (pitch > 25.0f) {
+                pitch = -25.0f;
+            }
+            if (roll > 20.0f) {
+                roll = -20.0f;
+            }
+            if (yaw > 360.0f) {
+                yaw -= 360.0f;
+            }
+
+            cyw43_arch_lwip_begin();
+            ws_server_broadcast_telemetry(pitch, roll, yaw);
+            cyw43_arch_lwip_end();
+
+            last_send = get_absolute_time();
+        }
+    }
 
     deinit_networking();
 }
