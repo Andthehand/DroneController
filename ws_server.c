@@ -10,7 +10,7 @@
 
 #define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 #define WS_MAX_HANDSHAKE 1024
-#define WS_MAX_FRAME 256
+#define WS_MAX_FRAME 512
 #define WS_MAX_RX_BUFFER 1024
 
 typedef enum {
@@ -23,6 +23,8 @@ typedef struct {
     ws_state_t state;
     char handshake[WS_MAX_HANDSHAKE];
     size_t handshake_len;
+    uint8_t rx_buffer[WS_MAX_RX_BUFFER];
+    size_t rx_len;
 } ws_client_t;
 
 static struct tcp_pcb *s_listener = NULL;
@@ -34,6 +36,11 @@ static err_t ws_accept(void *arg, struct tcp_pcb *newpcb, err_t err);
 static err_t ws_poll(void *arg, struct tcp_pcb *tpcb);
 static void ws_error(void *arg, err_t err);
 static err_t ws_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
+
+typedef struct {
+    size_t header_len;
+    size_t payload_len;
+} ws_frame_info_t;
 
 /*
  * Tiny SHA1 implementation for WebSocket handshake.
@@ -398,6 +405,8 @@ static void ws_close_client(void) {
         return;
     }
 
+    printf("WS closing client\n");
+
     if (s_client->pcb) {
         tcp_arg(s_client->pcb, NULL);
         tcp_recv(s_client->pcb, NULL);
@@ -421,24 +430,84 @@ static bool ws_try_handshake(ws_client_t *client) {
     const char *request = client->handshake;
 
     if (!contains_ci(request, "upgrade: websocket") || !contains_ci(request, "connection: upgrade")) {
+        printf("WS handshake rejected: missing upgrade headers\n");
         return false;
     }
 
     char ws_key[128];
     if (!extract_websocket_key(request, ws_key, sizeof(ws_key))) {
+        printf("WS handshake rejected: missing key\n");
         return false;
     }
 
     if (!ws_send_handshake_response(ws_key)) {
+        printf("WS handshake rejected: send response failed\n");
         return false;
     }
 
     client->state = WS_STATE_OPEN;
+    printf("WS handshake complete\n");
     return true;
+}
+
+static int ws_get_frame_info(const uint8_t *data, size_t len, ws_frame_info_t *info) {
+    if (!data || len < 2) {
+        return 0;
+    }
+
+    uint8_t payload_len_field = data[1] & 0x7Fu;
+    bool masked = (data[1] & 0x80u) != 0;
+    size_t header_len = 2u;
+    size_t payload_len = 0u;
+
+    if (!masked) {
+        printf("WS invalid frame: client frame is unmasked\n");
+        return -1;
+    }
+
+    if (payload_len_field <= 125u) {
+        payload_len = (size_t)payload_len_field;
+    } else if (payload_len_field == 126u) {
+        if (len < 4) {
+            return 0;
+        }
+
+        payload_len = ((size_t)data[2] << 8) | (size_t)data[3];
+        header_len += 2u;
+    } else {
+        printf("WS invalid frame: 64-bit payload lengths unsupported\n");
+        return -1;
+    }
+
+    if (payload_len > WS_MAX_FRAME) {
+        printf("WS invalid frame: payload %u exceeds max %u\n",
+               (unsigned int)payload_len,
+               (unsigned int)WS_MAX_FRAME);
+        return -1;
+    }
+
+    size_t frame_len = header_len + 4u + payload_len;
+    if (len < frame_len) {
+        return 0;
+    }
+
+    if (info != NULL) {
+        info->header_len = header_len;
+        info->payload_len = payload_len;
+    }
+
+    return (int)frame_len;
 }
 
 static err_t ws_handle_frame(ws_client_t *client, const uint8_t *data, size_t len) {
     if (!client || len < 2) {
+        return ERR_VAL;
+    }
+
+    ws_frame_info_t info = {0};
+    int frame_len = ws_get_frame_info(data, len, &info);
+    if (frame_len <= 0 || (size_t)frame_len > len) {
+        printf("WS handle frame failed: invalid frame length %d\n", frame_len);
         return ERR_VAL;
     }
 
@@ -448,28 +517,27 @@ static err_t ws_handle_frame(ws_client_t *client, const uint8_t *data, size_t le
     bool fin = (b0 & 0x80u) != 0;
     uint8_t opcode = b0 & 0x0Fu;
     bool masked = (b1 & 0x80u) != 0;
-    uint8_t payload_len = b1 & 0x7Fu;
 
-    if (!fin || !masked || payload_len > 125) {
+    if (!fin || !masked) {
+        printf("WS invalid frame flags: fin=%d masked=%d opcode=%u\n",
+               fin ? 1 : 0,
+               masked ? 1 : 0,
+               (unsigned int)opcode);
         return ERR_VAL;
     }
 
-    if (len < (size_t)(2 + 4 + payload_len)) {
-        return ERR_VAL;
-    }
-
-    const uint8_t *mask = &data[2];
-    const uint8_t *payload = &data[6];
-    uint8_t unmasked[125];
-    for (size_t i = 0; i < payload_len; ++i) {
+    const uint8_t *mask = &data[info.header_len];
+    const uint8_t *payload = &data[info.header_len + 4u];
+    uint8_t unmasked[WS_MAX_FRAME];
+    for (size_t i = 0; i < info.payload_len; ++i) {
         unmasked[i] = payload[i] ^ mask[i % 4];
     }
 
     switch (opcode) {
         case 0x1: {
-            char cmd[126];
-            memcpy(cmd, unmasked, payload_len);
-            cmd[payload_len] = '\0';
+            char cmd[WS_MAX_FRAME + 1];
+            memcpy(cmd, unmasked, info.payload_len);
+            cmd[info.payload_len] = '\0';
             if (strstr(cmd, "\"t\":\"gamepad\"") != NULL) {
                 ws_handle_gamepad_payload(cmd);
             } else {
@@ -478,14 +546,43 @@ static err_t ws_handle_frame(ws_client_t *client, const uint8_t *data, size_t le
             break;
         }
         case 0x8:
+            printf("WS close frame received\n");
             ws_send_frame(0x8, NULL, 0);
             ws_close_client();
             return ERR_OK;
         case 0x9:
-            ws_send_frame(0xA, unmasked, payload_len);
+            ws_send_frame(0xA, unmasked, info.payload_len);
             break;
         default:
+            printf("WS ignoring opcode %u\n", (unsigned int)opcode);
             break;
+    }
+
+    return ERR_OK;
+}
+
+static err_t ws_process_rx_buffer(ws_client_t *client) {
+    while (client->rx_len > 0) {
+        int frame_len = ws_get_frame_info(client->rx_buffer, client->rx_len, NULL);
+        if (frame_len == 0) {
+            return ERR_OK;
+        }
+
+        if (frame_len < 0) {
+            printf("WS rx parse failed with buffered len %u\n", (unsigned int)client->rx_len);
+            return ERR_VAL;
+        }
+
+        if (ws_handle_frame(client, client->rx_buffer, (size_t)frame_len) != ERR_OK) {
+            printf("WS frame handling failed\n");
+            return ERR_VAL;
+        }
+
+        size_t remaining = client->rx_len - (size_t)frame_len;
+        if (remaining > 0) {
+            memmove(client->rx_buffer, client->rx_buffer + frame_len, remaining);
+        }
+        client->rx_len = remaining;
     }
 
     return ERR_OK;
@@ -496,6 +593,9 @@ static err_t ws_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 
     ws_client_t *client = (ws_client_t *)arg;
     if (!client || err != ERR_OK) {
+        if (err != ERR_OK) {
+            printf("WS recv error: %d\n", (int)err);
+        }
         if (p) {
             pbuf_free(p);
         }
@@ -503,6 +603,7 @@ static err_t ws_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
     }
 
     if (p == NULL) {
+        printf("WS client disconnected by peer\n");
         ws_close_client();
         return ERR_OK;
     }
@@ -525,6 +626,7 @@ static err_t ws_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 
         if (strstr(client->handshake, "\r\n\r\n") != NULL) {
             if (!ws_try_handshake(client)) {
+                printf("WS handshake failed\n");
                 ws_close_client();
             }
         }
@@ -532,7 +634,18 @@ static err_t ws_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
     }
 
     if (client->state == WS_STATE_OPEN) {
-        if (ws_handle_frame(client, rx, copied) != ERR_OK) {
+        size_t room = WS_MAX_RX_BUFFER - client->rx_len;
+        if (copied > room) {
+            printf("WS rx overflow: copied=%u room=%u\n", (unsigned int)copied, (unsigned int)room);
+            ws_close_client();
+            return ERR_OK;
+        }
+
+        memcpy(client->rx_buffer + client->rx_len, rx, copied);
+        client->rx_len += copied;
+
+        if (ws_process_rx_buffer(client) != ERR_OK) {
+            printf("WS closing after rx buffer processing failure\n");
             ws_close_client();
         }
     }
@@ -561,6 +674,9 @@ static err_t ws_accept(void *arg, struct tcp_pcb *newpcb, err_t err) {
     client->pcb = newpcb;
     client->state = WS_STATE_HANDSHAKE;
     client->handshake_len = 0;
+    client->rx_len = 0;
+
+    printf("WS client accepted\n");
 
     s_client = client;
 
@@ -590,7 +706,7 @@ static err_t ws_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
 }
 
 static void ws_error(void *arg, err_t err) {
-    (void)err;
+    printf("WS async error: %d\n", (int)err);
     ws_client_t *client = (ws_client_t *)arg;
     if (client && client == s_client) {
         mem_free(s_client);

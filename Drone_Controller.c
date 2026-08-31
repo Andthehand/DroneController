@@ -9,6 +9,28 @@
 #include "kalman_filter.h"
 #include "ESC.h"
 
+#define GAMEPAD_DEADBAND      0.08f
+#define MAX_PITCH_MIX         0.30f
+#define MAX_ROLL_MIX          0.30f
+#define MAX_YAW_MIX           0.20f
+
+static float apply_deadband(float value, float deadband) {
+    if (value > -deadband && value < deadband) {
+        return 0.0f;
+    }
+    return value;
+}
+
+static float clampf(float value, float min_value, float max_value) {
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
 
 void initialize_subsystems() {
     printf("Starting main thread...\n");
@@ -71,19 +93,42 @@ void main_loop() {
         float roll_deg = kalman_1d_update(&roll_kalman, accel_roll_deg, sample.gyro_dps[0], dt_s);
         float pitch_deg = kalman_1d_update(&pitch_kalman, accel_pitch_deg, sample.gyro_dps[1], dt_s);
 
+        float throttle_cmd = 0.0f;
+        float pitch_cmd = 0.0f;
+        float roll_cmd = 0.0f;
+        float yaw_cmd = 0.0f;
         if (networking_gamepad_ready()) {
             networking_gamepad_t gamepad = {0};
             networking_get_gamepad(&gamepad);
 
+            if (gamepad.connected) {
+                throttle_cmd = clampf(gamepad.throttle, 0.0f, 1.0f);
+                pitch_cmd = apply_deadband(clampf(gamepad.pitch, -1.0f, 1.0f), GAMEPAD_DEADBAND);
+                roll_cmd = apply_deadband(clampf(gamepad.roll, -1.0f, 1.0f), GAMEPAD_DEADBAND);
+                yaw_cmd = apply_deadband(clampf(gamepad.yaw, -1.0f, 1.0f), GAMEPAD_DEADBAND);
+            }
+
+            float pitch_mix = pitch_cmd * MAX_PITCH_MIX;
+            float roll_mix = roll_cmd * MAX_ROLL_MIX;
+            float yaw_mix = yaw_cmd * MAX_YAW_MIX;
+
+            float m1 = throttle_cmd + pitch_mix + roll_mix + yaw_mix; // Front Right
+            float m2 = throttle_cmd + pitch_mix - roll_mix - yaw_mix; // Front Left
+            float m3 = throttle_cmd - pitch_mix + roll_mix - yaw_mix; // Rear Right
+            float m4 = throttle_cmd - pitch_mix - roll_mix + yaw_mix; // Rear Left
+            esc_send_normalized(m1, m2, m3, m4);
+
             if (gamepad.connected && absolute_time_diff_us(last_controller_log, now) >= 200000) {
-                printf("Gamepad T=%.2f R=%.2f P=%.2f Y=%.2f B=0x%08lx\n",
-                       gamepad.throttle,
-                       gamepad.roll,
-                       gamepad.pitch,
-                       gamepad.yaw,
+                  printf("Gamepad T=%.2f R=%.2f P=%.2f Y=%.2f B=0x%08lx\n",
+                       throttle_cmd,
+                       roll_cmd,
+                       pitch_cmd,
+                       yaw_cmd,
                        (unsigned long)gamepad.buttons);
                 last_controller_log = now;
             }
+        } else {
+            esc_send_normalized(0.0f, 0.0f, 0.0f, 0.0f);
         }
 
         networking_set_telemetry(pitch_deg, roll_deg, 0.0f);

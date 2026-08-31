@@ -287,7 +287,7 @@ function updateGamepadState()
     const rightX = applyDeadzone(pad.axes[2] ?? 0, 0.08);
 
     gamepadDisplay.connected = true;
-    gamepadDisplay.throttle = clamp((-leftY + 1) * 0.5, 0, 1);
+    gamepadDisplay.throttle = clamp(-leftY, 0, 1);
     gamepadDisplay.roll = 0;
     gamepadDisplay.pitch = clamp(-rightY, -1, 1);
     gamepadDisplay.yaw = clamp(rightX, -1, 1);
@@ -302,16 +302,22 @@ function sendGamepadState(nowMs)
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (nowMs - lastGamepadSendMs < 20) return;
 
-    ws.send(JSON.stringify({
+    const payload = {
         t: "gamepad",
-        seq: gamepadSeq++,
         connected: gamepadDisplay.connected,
-        throttle: gamepadDisplay.throttle,
-        roll: gamepadDisplay.roll,
-        pitch: gamepadDisplay.pitch,
-        yaw: gamepadDisplay.yaw,
+        throttle: Number(gamepadDisplay.throttle.toFixed(3)),
+        roll: Number(gamepadDisplay.roll.toFixed(3)),
+        pitch: Number(gamepadDisplay.pitch.toFixed(3)),
+        yaw: Number(gamepadDisplay.yaw.toFixed(3)),
         buttons: gamepadDisplay.buttons
-    }));
+    };
+
+    const message = JSON.stringify(payload);
+    if ((gamepadSeq++ % 50) === 0) {
+        console.log("WS gamepad send", message.length, message);
+    }
+
+    ws.send(message);
 
     lastGamepadSendMs = nowMs;
 }

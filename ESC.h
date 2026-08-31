@@ -8,6 +8,7 @@ extern "C" {
 
 bool init_ESC(void);
 void arm_ESC(void);
+void esc_send_normalized(float m1, float m2, float m3, float m4);
 
 #ifdef __cplusplus
 }
