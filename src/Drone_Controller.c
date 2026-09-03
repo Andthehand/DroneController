@@ -5,7 +5,7 @@
 
 #include "config.h"
 #include "networking.h"
-#include "lsm6dsv32x.h"
+#include "LSM6DSV32X.h"
 #include "kalman_filter.h"
 #include "ESC.h"
 

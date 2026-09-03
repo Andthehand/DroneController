@@ -37,16 +37,16 @@ add_subdirectory(external/pico-bidir-dshot)
 
 # Add executable. Default name is the project name, version 0.1
 add_executable(Drone_Controller
-    Drone_Controller.c
-    LSM6DSV32X.c
-    kalman_filter.c
-    networking.c
-    ws_server.c
-    ESC.c
+    src/Drone_Controller.c
+    src/utilities/LSM6DSV32X.c
+    src/utilities/kalman_filter.c
+    src/network/networking.c
+    src/network/ws_server.c
+    src/utilities/ESC.c
 )
 
 # The bidirectional DShot library is C++; compile ESC.c as C++ so it can include PIO_DShot.h.
-set_source_files_properties(ESC.c PROPERTIES LANGUAGE CXX)
+set_source_files_properties(src/utilities/ESC.c PROPERTIES LANGUAGE CXX)
 
 pico_set_program_name(Drone_Controller "Drone_Controller")
 pico_set_program_version(Drone_Controller "0.1")
@@ -70,7 +70,9 @@ pico_set_lwip_httpd_content(pico_httpd_content INTERFACE
 
 # Add the standard include files to the build
 target_include_directories(Drone_Controller PRIVATE
-    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/src
+    ${CMAKE_CURRENT_LIST_DIR}/src/network
+    ${CMAKE_CURRENT_LIST_DIR}/src/utilities
 )
 
 target_compile_definitions(Drone_Controller PRIVATE)
