@@ -8,11 +8,7 @@
 #include "LSM6DSV32X.h"
 #include "kalman_filter.h"
 #include "ESC.h"
-
-#define GAMEPAD_DEADBAND      0.08f
-#define MAX_PITCH_MIX         0.30f
-#define MAX_ROLL_MIX          0.30f
-#define MAX_YAW_MIX           0.20f
+#include "pid.h"
 
 static float apply_deadband(float value, float deadband) {
     if (value > -deadband && value < deadband) {
@@ -51,6 +47,8 @@ void main_loop() {
     lsm6dsv32x_sample_t sample;
     kalman_1d_t roll_kalman;
     kalman_1d_t pitch_kalman;
+    pid_controller_t roll_pid;
+    pid_controller_t pitch_pid;
 
     const float rad_to_deg = 57.2957795f;
     bool filter_seeded = false;
@@ -60,15 +58,20 @@ void main_loop() {
     kalman_1d_init(&roll_kalman, 0.001f, 0.003f, 0.03f);
     kalman_1d_init(&pitch_kalman, 0.001f, 0.003f, 0.03f);
 
+    pid_init(&roll_pid, ROLL_PITCH_P, ROLL_PITCH_I, ROLL_PITCH_D, -1.0f, 1.0f);
+    pid_init(&pitch_pid, ROLL_PITCH_P, ROLL_PITCH_I, ROLL_PITCH_D, -1.0f, 1.0f);
+
     while (true) {
         if (!lsm6dsv32x_read_sample(&sample)) {
             printf("IMU read failed\n");
             continue;
         }
 
+        // Convert to seconds
         absolute_time_t now = get_absolute_time();
         float dt_s = (float)absolute_time_diff_us(last_update, now) / 1000000.0f;
         last_update = now;
+        // Should only happen at startup
         if (dt_s <= 0.0f || dt_s > 0.2f) {
             dt_s = 0.002f;
         }
@@ -87,6 +90,7 @@ void main_loop() {
         float roll_deg = kalman_1d_update(&roll_kalman, accel_roll_deg, sample.gyro_dps[0], dt_s);
         float pitch_deg = kalman_1d_update(&pitch_kalman, accel_pitch_deg, sample.gyro_dps[1], dt_s);
 
+        // From -1 to 1
         float throttle_cmd = 0.0f;
         float pitch_cmd = 0.0f;
         float roll_cmd = 0.0f;
@@ -102,8 +106,9 @@ void main_loop() {
                 yaw_cmd = apply_deadband(clampf(gamepad.yaw, -1.0f, 1.0f), GAMEPAD_DEADBAND);
             }
 
-            float pitch_mix = pitch_cmd * MAX_PITCH_MIX;
-            float roll_mix = roll_cmd * MAX_ROLL_MIX;
+            // Update Stabolize PIDs
+            float pitch_mix = pid_update(&pitch_pid, pitch_cmd * MAX_PITCH_DEGREE, pitch_deg, dt_s);
+            float roll_mix = pid_update(&roll_pid, roll_cmd * MAX_ROLL_DEGREE, roll_deg, dt_s);
             float yaw_mix = yaw_cmd * MAX_YAW_MIX;
 
             float m1 = throttle_cmd + pitch_mix + roll_mix + yaw_mix; // Front Right
@@ -111,23 +116,9 @@ void main_loop() {
             float m3 = throttle_cmd - pitch_mix + roll_mix - yaw_mix; // Rear Right
             float m4 = throttle_cmd - pitch_mix - roll_mix + yaw_mix; // Rear Left
             esc_send_normalized(m1, m2, m3, m4);
-
-            if (gamepad.connected && absolute_time_diff_us(last_controller_log, now) >= 200000) {
-                  printf("Gamepad T=%.2f R=%.2f P=%.2f Y=%.2f B=0x%08lx\n",
-                       throttle_cmd,
-                       roll_cmd,
-                       pitch_cmd,
-                       yaw_cmd,
-                       (unsigned long)gamepad.buttons);
-                last_controller_log = now;
-            }
-        } else {
-            esc_send_normalized(0.0f, 0.0f, 0.0f, 0.0f);
         }
 
         networking_set_telemetry(pitch_deg, roll_deg, 0.0f);
-
-        sleep_ms(2); //TODO: remove
     }
 }
 

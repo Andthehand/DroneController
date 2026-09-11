@@ -40,6 +40,7 @@ add_executable(Drone_Controller
     src/Drone_Controller.c
     src/utilities/LSM6DSV32X.c
     src/utilities/kalman_filter.c
+    src/utilities/pid.c
     src/network/networking.c
     src/network/ws_server.c
     src/utilities/ESC.c
