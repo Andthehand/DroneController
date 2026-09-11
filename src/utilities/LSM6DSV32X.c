@@ -50,7 +50,6 @@
 #define LSM6_CTRL8_VALUE 0x05
 
 static bool s_initialized = false;
-static float s_gyro_bias_dps[3] = {0.0f, 0.0f, 0.0f};
 
 static inline void lsm6_select(void) {
 	gpio_put(PIN_CS, 0);
@@ -145,46 +144,6 @@ bool lsm6dsv32x_init(void) {
 	}
 
 	s_initialized = true;
-	lsm6dsv32x_clear_gyro_bias();
-	return true;
-}
-
-void lsm6dsv32x_clear_gyro_bias(void) {
-	s_gyro_bias_dps[0] = 0.0f;
-	s_gyro_bias_dps[1] = 0.0f;
-	s_gyro_bias_dps[2] = 0.0f;
-}
-
-bool lsm6dsv32x_calibrate_gyro_bias(uint16_t sample_count, uint32_t sample_interval_ms) {
-	if (!s_initialized || sample_count == 0) {
-		return false;
-	}
-
-	int64_t gyro_sum[3] = {0, 0, 0};
-	int16_t accel_raw[3] = {0, 0, 0};
-	int16_t gyro_raw[3] = {0, 0, 0};
-
-	for (uint16_t i = 0; i < sample_count; ++i) {
-		if (!lsm6dsv32x_read_raw(accel_raw, gyro_raw)) {
-			return false;
-		}
-
-		gyro_sum[0] += gyro_raw[0];
-		gyro_sum[1] += gyro_raw[1];
-		gyro_sum[2] += gyro_raw[2];
-
-		if (sample_interval_ms > 0) {
-			sleep_ms(sample_interval_ms);
-		}
-	}
-
-	for (int axis = 0; axis < 3; ++axis) {
-		float mean_raw = (float)gyro_sum[axis] / (float)sample_count;
-		s_gyro_bias_dps[axis] = mean_raw * LSM6_GYRO_SCALE_DPS_PER_LSB;
-	}
-
-    printf("Gyro bias (dps): [%.2f, %.2f, %.2f]\n", s_gyro_bias_dps[0], s_gyro_bias_dps[1], s_gyro_bias_dps[2]);
-
 	return true;
 }
 
@@ -222,7 +181,7 @@ bool lsm6dsv32x_read_sample(lsm6dsv32x_sample_t *sample) {
 
 	for (int i = 0; i < 3; ++i) {
 		sample->accel_g[i] = (float)sample->accel_raw[i] * LSM6_ACCEL_SCALE_G_PER_LSB;
-		sample->gyro_dps[i] = ((float)sample->gyro_raw[i] * LSM6_GYRO_SCALE_DPS_PER_LSB) - s_gyro_bias_dps[i];
+		sample->gyro_dps[i] = (float)sample->gyro_raw[i] * LSM6_GYRO_SCALE_DPS_PER_LSB;
 	}
 
 	return true;

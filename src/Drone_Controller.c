@@ -45,12 +45,6 @@ void initialize_subsystems() {
 
     init_ESC();
     arm_ESC();
-
-    printf("Calibrating gyro bias (keep craft stationary)...\n");
-    if (!lsm6dsv32x_calibrate_gyro_bias(15000, 1)) {
-        printf("Gyro bias calibration failed; continuing without bias correction\n");
-        lsm6dsv32x_clear_gyro_bias();
-    }
 }
 
 void main_loop() {
