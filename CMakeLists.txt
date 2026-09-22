@@ -65,8 +65,10 @@ target_link_libraries(Drone_Controller
 
 pico_add_library(pico_httpd_content NOFLAG)
 pico_set_lwip_httpd_content(pico_httpd_content INTERFACE
-        ${CMAKE_CURRENT_LIST_DIR}/content/404.html
-        ${CMAKE_CURRENT_LIST_DIR}/content/index.html
+    ${CMAKE_CURRENT_LIST_DIR}/content/404.html
+    ${CMAKE_CURRENT_LIST_DIR}/content/index.html
+    ${CMAKE_CURRENT_LIST_DIR}/content/three.core.js
+    ${CMAKE_CURRENT_LIST_DIR}/content/three.module.js
 )
 
 # Add the standard include files to the build
