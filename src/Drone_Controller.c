@@ -40,7 +40,6 @@ void initialize_subsystems() {
     }
 
     init_ESC();
-    arm_ESC();
 }
 
 void main_loop() {
@@ -62,6 +61,15 @@ void main_loop() {
     pid_init(&pitch_pid, ROLL_PITCH_P, ROLL_PITCH_I, ROLL_PITCH_D, -1.0f, 1.0f);
 
     while (true) {
+        bool arm_requested = networking_get_arm_request();
+        if (arm_requested != esc_is_armed()) {
+            if (arm_requested) {
+                arm_ESC();
+            } else {
+                disarm_ESC();
+            }
+        }
+
         if (!lsm6dsv32x_read_sample(&sample)) {
             printf("IMU read failed\n");
             continue;

@@ -34,6 +34,7 @@
     <div>Link: <span id="ws-status">connecting...</span></div>
     <div>Pad: <span id="pad-status">searching...</span></div>
     <div>Cmd: T <span id="cmd-throttle">0.00</span> R <span id="cmd-roll">0.00</span> P <span id="cmd-pitch">0.00</span> Y <span id="cmd-yaw">0.00</span></div>
+    <div>ESC: <span id="arm-status">disarmed</span> <button id="arm-btn" type="button">Arm</button></div>
 </div>
 
 <script type="module">
@@ -209,8 +210,30 @@ const gamepadDisplay = {
 
 const wsStatus = document.getElementById("ws-status");
 const padStatus = document.getElementById("pad-status");
+const armStatus = document.getElementById("arm-status");
+const armButton = document.getElementById("arm-btn");
 let reconnectDelayMs = 500;
 let ws = null;
+let armed = false;
+
+function setArmed(next)
+{
+    armed = next;
+    armStatus.textContent = armed ? "armed" : "disarmed";
+    armButton.textContent = armed ? "Disarm" : "Arm";
+}
+
+function sendArmRequest(next)
+{
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ t: "arm", armed: next }));
+}
+
+armButton.addEventListener("click", () =>
+{
+    sendArmRequest(!armed);
+    setArmed(!armed);
+});
 
 function setStatus(text)
 {
@@ -331,6 +354,7 @@ function connectWebSocket()
     {
         reconnectDelayMs = 500;
         setStatus("online");
+        setArmed(false);
     });
 
     ws.addEventListener("message", (event) =>
@@ -353,6 +377,7 @@ function connectWebSocket()
     ws.addEventListener("close", () =>
     {
         setStatus("reconnecting...");
+        setArmed(false);
         setTimeout(connectWebSocket, reconnectDelayMs);
         reconnectDelayMs = Math.min(reconnectDelayMs * 2, 5000);
     });

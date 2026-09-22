@@ -20,3 +20,5 @@ bool networking_telemetry_ready(void);
 void networking_set_gamepad(float throttle, float roll, float pitch, float yaw, uint32_t buttons, bool connected);
 void networking_get_gamepad(networking_gamepad_t *state);
 bool networking_gamepad_ready(void);
+void networking_set_arm_request(bool armed);
+bool networking_get_arm_request(void);

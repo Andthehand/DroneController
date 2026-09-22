@@ -12,6 +12,7 @@
 #define DSHOT_THROTTLE_MAX       2000
 
 static DShotX4 *g_esc = nullptr;
+static bool g_armed = false;
 
 static float clampf(float value, float min_value, float max_value) {
     if (value < min_value) {
@@ -49,11 +50,34 @@ void arm_ESC() {
         return;
     }
 
+    if (g_armed) {
+        return;
+    }
+
+    // Required DShot arming sequence: zero throttle held for a period before motors will spin.
     for(int i = 0; i < 4000; i++) {
         uint16_t throttles[4] = {0, 0, 0, 0};
         g_esc->sendThrottles(throttles);
         sleep_us(DSHOT_UPDATE_US);
     }
+
+    g_armed = true;
+    printf("ESC armed\n");
+}
+
+void disarm_ESC() {
+    g_armed = false;
+
+    if (g_esc) {
+        uint16_t throttles[4] = {0, 0, 0, 0};
+        g_esc->sendThrottles(throttles);
+    }
+
+    printf("ESC disarmed\n");
+}
+
+bool esc_is_armed(void) {
+    return g_armed;
 }
 
 void esc_send_normalized(float m1, float m2, float m3, float m4) {
@@ -61,12 +85,15 @@ void esc_send_normalized(float m1, float m2, float m3, float m4) {
         return;
     }
 
-    float motors[4] = {m1, m2, m3, m4};
     uint16_t throttles[4] = {0, 0, 0, 0};
 
-    for (int i = 0; i < 4; ++i) {
-        float clamped = clampf(motors[i], 0.0f, 1.0f);
-        throttles[i] = (uint16_t)(clamped * (float)DSHOT_THROTTLE_MAX);
+    // Refuse to send real throttle values until armed, regardless of caller intent.
+    if (g_armed) {
+        float motors[4] = {m1, m2, m3, m4};
+        for (int i = 0; i < 4; ++i) {
+            float clamped = clampf(motors[i], 0.0f, 1.0f);
+            throttles[i] = (uint16_t)(clamped * (float)DSHOT_THROTTLE_MAX);
+        }
     }
 
     g_esc->sendThrottles(throttles);

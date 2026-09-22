@@ -31,6 +31,8 @@ static critical_section_t s_telemetry_lock;
 static telemetry_state_t s_telemetry = {0.0f, 0.0f, 0.0f, false};
 static critical_section_t s_gamepad_lock;
 static gamepad_state_t s_gamepad = {0.0f, 0.0f, 0.0f, 0.0f, 0u, false, false};
+static critical_section_t s_arm_lock;
+static bool s_arm_requested = false;
 
 void init_networking() {
     printf("Initializing networking...\n");
@@ -139,6 +141,20 @@ bool networking_gamepad_ready(void) {
     return ready;
 }
 
+void networking_set_arm_request(bool armed) {
+    critical_section_enter_blocking(&s_arm_lock);
+    s_arm_requested = armed;
+    critical_section_exit(&s_arm_lock);
+}
+
+bool networking_get_arm_request(void) {
+    bool armed;
+    critical_section_enter_blocking(&s_arm_lock);
+    armed = s_arm_requested;
+    critical_section_exit(&s_arm_lock);
+    return armed;
+}
+
 void networking_thread() {
     init_networking();
 
@@ -167,5 +183,6 @@ void networking_thread() {
 void setup_networking_thread() {
     critical_section_init(&s_telemetry_lock);
     critical_section_init(&s_gamepad_lock);
+    critical_section_init(&s_arm_lock);
     multicore_launch_core1(networking_thread);
 }

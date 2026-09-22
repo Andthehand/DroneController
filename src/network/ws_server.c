@@ -302,6 +302,15 @@ static void ws_handle_gamepad_payload(const char *json) {
     networking_set_gamepad(throttle, roll, pitch, yaw, buttons, connected);
 }
 
+static void ws_handle_arm_payload(const char *json) {
+    bool armed = false;
+    if (!json_get_bool(json, "armed", &armed)) {
+        return;
+    }
+
+    networking_set_arm_request(armed);
+}
+
 static bool extract_websocket_key(const char *request, char *key, size_t key_size) {
     const char *hdr = strstr(request, "Sec-WebSocket-Key:");
     if (!hdr) {
@@ -406,6 +415,9 @@ static void ws_close_client(void) {
     }
 
     printf("WS closing client\n");
+
+    // Safety: force a disarm request when the control link is lost.
+    networking_set_arm_request(false);
 
     if (s_client->pcb) {
         tcp_arg(s_client->pcb, NULL);
@@ -540,6 +552,8 @@ static err_t ws_handle_frame(ws_client_t *client, const uint8_t *data, size_t le
             cmd[info.payload_len] = '\0';
             if (strstr(cmd, "\"t\":\"gamepad\"") != NULL) {
                 ws_handle_gamepad_payload(cmd);
+            } else if (strstr(cmd, "\"t\":\"arm\"") != NULL) {
+                ws_handle_arm_payload(cmd);
             } else {
                 printf("WS cmd: %s\n", cmd);
             }
