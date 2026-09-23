@@ -591,6 +591,10 @@ static err_t ws_handle_frame(ws_client_t *client, const uint8_t *data, size_t le
                 ws_handle_gamepad_payload(cmd);
             } else if (strstr(cmd, "\"t\":\"pid_tune\"") != NULL) {
                 ws_handle_pid_tune_payload(cmd);
+            } else if (strstr(cmd, "\"t\":\"pid_save\"") != NULL) {
+                printf(networking_save_pid_tuning()
+                    ? "Saved PID gains to flash\n"
+                    : "Failed to save PID gains to flash\n");
             } else if (strstr(cmd, "\"t\":\"esc_arm\"") != NULL) {
                 ws_handle_esc_arm_payload(cmd);
             } else {

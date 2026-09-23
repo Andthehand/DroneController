@@ -4,11 +4,13 @@
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "pico/flash.h"
 #include "pico/sync.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/apps/httpd.h"
 
 #include "config.h"
+#include "pid_storage.h"
 #include "ws_server.h"
 
 typedef struct {
@@ -176,6 +178,13 @@ void networking_get_pid_tuning(networking_pid_gains_t *roll, networking_pid_gain
     critical_section_exit(&s_pid_tuning_lock);
 }
 
+bool networking_save_pid_tuning(void) {
+    networking_pid_gains_t roll;
+    networking_pid_gains_t pitch;
+    networking_get_pid_tuning(&roll, &pitch, NULL);
+    return pid_storage_save(&roll, &pitch);
+}
+
 void networking_set_esc_arm_request(bool armed) {
     critical_section_enter_blocking(&s_esc_arm_lock);
     if (s_esc_arm_requested != armed) {
@@ -227,5 +236,19 @@ void setup_networking_thread() {
     critical_section_init(&s_gamepad_lock);
     critical_section_init(&s_pid_tuning_lock);
     critical_section_init(&s_esc_arm_lock);
+
+    if (!flash_safe_execute_core_init()) {
+        printf("Failed to initialize flash safety on main core\n");
+    }
+
+    networking_pid_gains_t roll;
+    networking_pid_gains_t pitch;
+    if (pid_storage_load(&roll, &pitch)) {
+        s_roll_gains = roll;
+        s_pitch_gains = pitch;
+        ++s_pid_tuning_revision;
+        printf("Loaded PID gains from flash\n");
+    }
+
     multicore_launch_core1(networking_thread);
 }

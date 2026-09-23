@@ -41,6 +41,7 @@ add_executable(Drone_Controller
     src/utilities/LSM6DSV32X.c
     src/utilities/kalman_filter.c
     src/utilities/pid.c
+    src/utilities/pid_storage.c
     src/network/networking.c
     src/network/ws_server.c
     src/utilities/ESC.c
@@ -60,6 +61,8 @@ target_link_libraries(Drone_Controller
     pico_lwip_http
     pico_httpd_content
     pico_multicore
+    pico_flash
+    hardware_flash
     Pico_Bidir_DShot
 )
 

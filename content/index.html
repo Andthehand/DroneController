@@ -150,7 +150,7 @@
 
     .apply-row { justify-content: space-between; gap: 12px; margin-bottom: 24px; }
     .apply-row label { display: flex; align-items: center; gap: 7px; text-transform: none; }
-    #apply-gains {
+    #apply-gains, #save-gains {
         min-width: 112px;
         padding: 10px 14px;
         border: 0;
@@ -159,7 +159,8 @@
         background: var(--green);
         font-weight: 700;
     }
-    #apply-gains:disabled { opacity: 0.45; cursor: not-allowed; }
+    #save-gains { border: 1px solid var(--line); color: var(--ink); background: transparent; }
+    #apply-gains:disabled, #save-gains:disabled { opacity: 0.45; cursor: not-allowed; }
 
     .chart-block { margin-bottom: 20px; }
     canvas {
@@ -256,6 +257,7 @@
     </div>
     <div class="apply-row">
         <label><input id="apply-both" type="checkbox"> Apply to both axes</label>
+        <button id="save-gains" disabled>Save</button>
         <button id="apply-gains" disabled>Apply gains</button>
     </div>
 
@@ -475,6 +477,7 @@ const gainInputs = [
     document.getElementById("gain-d")
 ];
 const applyButton = document.getElementById("apply-gains");
+const saveButton = document.getElementById("save-gains");
 const armButton = document.getElementById("arm-esc");
 const armState = document.getElementById("arm-state");
 const responseCanvas = document.getElementById("response-chart");
@@ -487,6 +490,7 @@ function setStatus(text)
     wsStatus.textContent = text;
     tuningStatus.classList.toggle("online", text === "online");
     applyButton.disabled = text !== "online";
+    saveButton.disabled = text !== "online";
     armButton.disabled = text !== "online" || pendingArmState !== null;
     if (text !== "online") {
         escArmed = false;
@@ -549,6 +553,12 @@ function sendPidGains()
         ki: values[1],
         kd: values[2]
     }));
+}
+
+function savePidGains()
+{
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ t: "pid_save" }));
 }
 
 function gainsMatchDraft(axis)
@@ -831,6 +841,7 @@ gainInputs.forEach(input => input.addEventListener("input", () => {
     gainDrafts[activeAxis] = gainInputs.map(field => field.value);
 }));
 applyButton.addEventListener("click", sendPidGains);
+saveButton.addEventListener("click", savePidGains);
 armButton.addEventListener("click", sendArmRequest);
 document.getElementById("clear-history").addEventListener("click", () => {
     histories[activeAxis].length = 0;
