@@ -1,6 +1,7 @@
 #include "networking.h"
 
 #include <stdio.h>
+#include <string.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/sync.h"
@@ -9,13 +10,6 @@
 
 #include "config.h"
 #include "ws_server.h"
-
-typedef struct {
-    float pitch_deg;
-    float roll_deg;
-    float yaw_deg;
-    bool ready;
-} telemetry_state_t;
 
 typedef struct {
     float throttle;
@@ -28,11 +22,17 @@ typedef struct {
 } gamepad_state_t;
 
 static critical_section_t s_telemetry_lock;
-static telemetry_state_t s_telemetry = {0.0f, 0.0f, 0.0f, false};
+static networking_telemetry_t s_telemetry = {0};
+static bool s_telemetry_ready = false;
 static critical_section_t s_gamepad_lock;
 static gamepad_state_t s_gamepad = {0.0f, 0.0f, 0.0f, 0.0f, 0u, false, false};
-static critical_section_t s_arm_lock;
-static bool s_arm_requested = false;
+static critical_section_t s_pid_tuning_lock;
+static networking_pid_gains_t s_roll_gains = {ROLL_PITCH_P, ROLL_PITCH_I, ROLL_PITCH_D};
+static networking_pid_gains_t s_pitch_gains = {ROLL_PITCH_P, ROLL_PITCH_I, ROLL_PITCH_D};
+static uint32_t s_pid_tuning_revision = 0;
+static critical_section_t s_esc_arm_lock;
+static bool s_esc_arm_requested = false;
+static uint32_t s_esc_arm_revision = 0;
 
 void init_networking() {
     printf("Initializing networking...\n");
@@ -74,33 +74,31 @@ void deinit_networking() {
     cyw43_arch_deinit();
 }
 
-void networking_set_telemetry(float pitch_deg, float roll_deg, float yaw_deg) {
+void networking_set_telemetry(const networking_telemetry_t *telemetry) {
+    if (telemetry == NULL) {
+        return;
+    }
+
     critical_section_enter_blocking(&s_telemetry_lock);
-    s_telemetry.pitch_deg = pitch_deg;
-    s_telemetry.roll_deg = roll_deg;
-    s_telemetry.yaw_deg = yaw_deg;
-    s_telemetry.ready = true;
+    s_telemetry = *telemetry;
+    s_telemetry_ready = true;
     critical_section_exit(&s_telemetry_lock);
 }
 
-void networking_get_telemetry(float *pitch_deg, float *roll_deg, float *yaw_deg) {
+void networking_get_telemetry(networking_telemetry_t *telemetry) {
+    if (telemetry == NULL) {
+        return;
+    }
+
     critical_section_enter_blocking(&s_telemetry_lock);
-    if (pitch_deg != NULL) {
-        *pitch_deg = s_telemetry.pitch_deg;
-    }
-    if (roll_deg != NULL) {
-        *roll_deg = s_telemetry.roll_deg;
-    }
-    if (yaw_deg != NULL) {
-        *yaw_deg = s_telemetry.yaw_deg;
-    }
+    *telemetry = s_telemetry;
     critical_section_exit(&s_telemetry_lock);
 }
 
 bool networking_telemetry_ready(void) {
     bool ready;
     critical_section_enter_blocking(&s_telemetry_lock);
-    ready = s_telemetry.ready;
+    ready = s_telemetry_ready;
     critical_section_exit(&s_telemetry_lock);
     return ready;
 }
@@ -141,18 +139,61 @@ bool networking_gamepad_ready(void) {
     return ready;
 }
 
-void networking_set_arm_request(bool armed) {
-    critical_section_enter_blocking(&s_arm_lock);
-    s_arm_requested = armed;
-    critical_section_exit(&s_arm_lock);
+bool networking_set_pid_tuning(const char *axis, float kp, float ki, float kd) {
+    if (axis == NULL) {
+        return false;
+    }
+
+    networking_pid_gains_t gains = {kp, ki, kd};
+    critical_section_enter_blocking(&s_pid_tuning_lock);
+    if (strcmp(axis, "roll") == 0) {
+        s_roll_gains = gains;
+    } else if (strcmp(axis, "pitch") == 0) {
+        s_pitch_gains = gains;
+    } else if (strcmp(axis, "both") == 0) {
+        s_roll_gains = gains;
+        s_pitch_gains = gains;
+    } else {
+        critical_section_exit(&s_pid_tuning_lock);
+        return false;
+    }
+    ++s_pid_tuning_revision;
+    critical_section_exit(&s_pid_tuning_lock);
+    return true;
 }
 
-bool networking_get_arm_request(void) {
-    bool armed;
-    critical_section_enter_blocking(&s_arm_lock);
-    armed = s_arm_requested;
-    critical_section_exit(&s_arm_lock);
-    return armed;
+void networking_get_pid_tuning(networking_pid_gains_t *roll, networking_pid_gains_t *pitch, uint32_t *revision) {
+    critical_section_enter_blocking(&s_pid_tuning_lock);
+    if (roll != NULL) {
+        *roll = s_roll_gains;
+    }
+    if (pitch != NULL) {
+        *pitch = s_pitch_gains;
+    }
+    if (revision != NULL) {
+        *revision = s_pid_tuning_revision;
+    }
+    critical_section_exit(&s_pid_tuning_lock);
+}
+
+void networking_set_esc_arm_request(bool armed) {
+    critical_section_enter_blocking(&s_esc_arm_lock);
+    if (s_esc_arm_requested != armed) {
+        s_esc_arm_requested = armed;
+        ++s_esc_arm_revision;
+    }
+    critical_section_exit(&s_esc_arm_lock);
+}
+
+void networking_get_esc_arm_request(bool *armed, uint32_t *revision) {
+    critical_section_enter_blocking(&s_esc_arm_lock);
+    if (armed != NULL) {
+        *armed = s_esc_arm_requested;
+    }
+    if (revision != NULL) {
+        *revision = s_esc_arm_revision;
+    }
+    critical_section_exit(&s_esc_arm_lock);
 }
 
 void networking_thread() {
@@ -162,15 +203,16 @@ void networking_thread() {
 
     while (true) {
         if (absolute_time_diff_us(last_send, get_absolute_time()) >= 40000) {
-            float pitch = 0.0f;
-            float roll = 0.0f;
-            float yaw = 0.0f;
+            networking_telemetry_t telemetry = {0};
+            networking_pid_gains_t roll_gains;
+            networking_pid_gains_t pitch_gains;
             if (networking_telemetry_ready()) {
-                networking_get_telemetry(&pitch, &roll, &yaw);
+                networking_get_telemetry(&telemetry);
             }
+            networking_get_pid_tuning(&roll_gains, &pitch_gains, NULL);
 
             cyw43_arch_lwip_begin();
-            ws_server_broadcast_telemetry(pitch, roll, yaw);
+            ws_server_broadcast_telemetry(&telemetry, &roll_gains, &pitch_gains);
             cyw43_arch_lwip_end();
 
             last_send = get_absolute_time();
@@ -183,6 +225,7 @@ void networking_thread() {
 void setup_networking_thread() {
     critical_section_init(&s_telemetry_lock);
     critical_section_init(&s_gamepad_lock);
-    critical_section_init(&s_arm_lock);
+    critical_section_init(&s_pid_tuning_lock);
+    critical_section_init(&s_esc_arm_lock);
     multicore_launch_core1(networking_thread);
 }

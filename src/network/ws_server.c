@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <math.h>
 
 #include "lwip/tcp.h"
 #include "networking.h"
@@ -302,13 +303,42 @@ static void ws_handle_gamepad_payload(const char *json) {
     networking_set_gamepad(throttle, roll, pitch, yaw, buttons, connected);
 }
 
-static void ws_handle_arm_payload(const char *json) {
-    bool armed = false;
-    if (!json_get_bool(json, "armed", &armed)) {
+static void ws_handle_pid_tune_payload(const char *json) {
+    float kp;
+    float ki;
+    float kd;
+    if (!json_get_float(json, "kp", &kp) ||
+        !json_get_float(json, "ki", &ki) ||
+        !json_get_float(json, "kd", &kd) ||
+        !isfinite(kp) || !isfinite(ki) || !isfinite(kd) ||
+        kp < 0.0f || ki < 0.0f || kd < 0.0f ||
+        kp > 100.0f || ki > 100.0f || kd > 100.0f) {
+        printf("WS rejected invalid PID tuning request\n");
         return;
     }
 
-    networking_set_arm_request(armed);
+    const char *axis = NULL;
+    if (strstr(json, "\"axis\":\"roll\"") != NULL) {
+        axis = "roll";
+    } else if (strstr(json, "\"axis\":\"pitch\"") != NULL) {
+        axis = "pitch";
+    } else if (strstr(json, "\"axis\":\"both\"") != NULL) {
+        axis = "both";
+    }
+
+    if (axis == NULL || !networking_set_pid_tuning(axis, kp, ki, kd)) {
+        printf("WS rejected PID tuning axis\n");
+    }
+}
+
+static void ws_handle_esc_arm_payload(const char *json) {
+    bool armed;
+    if (!json_get_bool(json, "armed", &armed)) {
+        printf("WS rejected invalid ESC arm request\n");
+        return;
+    }
+
+    networking_set_esc_arm_request(armed);
 }
 
 static bool extract_websocket_key(const char *request, char *key, size_t key_size) {
@@ -356,19 +386,27 @@ static bool ws_send_raw(const uint8_t *data, size_t len) {
 }
 
 static bool ws_send_frame(uint8_t opcode, const uint8_t *payload, size_t payload_len) {
-    if (payload_len > 125) {
+    if (payload_len > WS_MAX_FRAME) {
         return false;
     }
 
-    uint8_t frame[2 + 125];
+    uint8_t frame[4 + WS_MAX_FRAME];
+    size_t header_len = 2;
     frame[0] = 0x80u | (opcode & 0x0Fu);
-    frame[1] = (uint8_t)payload_len;
-
-    if (payload_len > 0 && payload) {
-        memcpy(&frame[2], payload, payload_len);
+    if (payload_len <= 125) {
+        frame[1] = (uint8_t)payload_len;
+    } else {
+        frame[1] = 126;
+        frame[2] = (uint8_t)(payload_len >> 8);
+        frame[3] = (uint8_t)(payload_len & 0xFFu);
+        header_len = 4;
     }
 
-    return ws_send_raw(frame, 2 + payload_len);
+    if (payload_len > 0 && payload) {
+        memcpy(&frame[header_len], payload, payload_len);
+    }
+
+    return ws_send_raw(frame, header_len + payload_len);
 }
 
 static bool ws_send_handshake_response(const char *client_key) {
@@ -415,9 +453,8 @@ static void ws_close_client(void) {
     }
 
     printf("WS closing client\n");
-
-    // Safety: force a disarm request when the control link is lost.
-    networking_set_arm_request(false);
+    networking_set_esc_arm_request(false);
+    networking_set_gamepad(0.0f, 0.0f, 0.0f, 0.0f, 0u, false);
 
     if (s_client->pcb) {
         tcp_arg(s_client->pcb, NULL);
@@ -552,8 +589,10 @@ static err_t ws_handle_frame(ws_client_t *client, const uint8_t *data, size_t le
             cmd[info.payload_len] = '\0';
             if (strstr(cmd, "\"t\":\"gamepad\"") != NULL) {
                 ws_handle_gamepad_payload(cmd);
-            } else if (strstr(cmd, "\"t\":\"arm\"") != NULL) {
-                ws_handle_arm_payload(cmd);
+            } else if (strstr(cmd, "\"t\":\"pid_tune\"") != NULL) {
+                ws_handle_pid_tune_payload(cmd);
+            } else if (strstr(cmd, "\"t\":\"esc_arm\"") != NULL) {
+                ws_handle_esc_arm_payload(cmd);
             } else {
                 printf("WS cmd: %s\n", cmd);
             }
@@ -763,21 +802,44 @@ void ws_server_deinit(void) {
     }
 }
 
-void ws_server_broadcast_telemetry(float pitch, float roll, float yaw) {
-    if (!s_client || s_client->state != WS_STATE_OPEN) {
+void ws_server_broadcast_telemetry(const networking_telemetry_t *telemetry,
+                                   const networking_pid_gains_t *roll_gains,
+                                   const networking_pid_gains_t *pitch_gains) {
+    if (!s_client || s_client->state != WS_STATE_OPEN ||
+        telemetry == NULL || roll_gains == NULL || pitch_gains == NULL) {
         return;
     }
 
     static uint32_t seq = 0;
-    char json[128];
+    bool arm_requested = false;
+    networking_get_esc_arm_request(&arm_requested, NULL);
+    char json[512];
     int len = snprintf(
         json,
         sizeof(json),
-        "{\"t\":\"telemetry\",\"seq\":%lu,\"pitch\":%.2f,\"roll\":%.2f,\"yaw\":%.2f}",
+        "{\"t\":\"telemetry\",\"seq\":%lu,\"pitch\":%.2f,\"roll\":%.2f,\"yaw\":%.2f,\"armed\":%s,\"armRequested\":%s,"
+        "\"pid\":{\"roll\":{\"sp\":%.2f,\"pv\":%.2f,\"err\":%.2f,\"out\":%.3f,\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},"
+        "\"pitch\":{\"sp\":%.2f,\"pv\":%.2f,\"err\":%.2f,\"out\":%.3f,\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f}}}",
         (unsigned long)seq++,
-        pitch,
-        roll,
-        yaw
+        telemetry->pitch_deg,
+        telemetry->roll_deg,
+        telemetry->yaw_deg,
+        telemetry->esc_armed ? "true" : "false",
+        arm_requested ? "true" : "false",
+        telemetry->roll_pid.setpoint,
+        telemetry->roll_pid.measurement,
+        telemetry->roll_pid.error,
+        telemetry->roll_pid.output,
+        roll_gains->kp,
+        roll_gains->ki,
+        roll_gains->kd,
+        telemetry->pitch_pid.setpoint,
+        telemetry->pitch_pid.measurement,
+        telemetry->pitch_pid.error,
+        telemetry->pitch_pid.output,
+        pitch_gains->kp,
+        pitch_gains->ki,
+        pitch_gains->kd
     );
 
     if (len <= 0 || (size_t)len >= sizeof(json)) {

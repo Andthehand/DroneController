@@ -6,22 +6,216 @@
 <title>Quadcopter Viewer</title>
 
 <style>
+    :root {
+        --ink: #eef4f1;
+        --muted: #91a29c;
+        --panel: rgba(13, 18, 18, 0.94);
+        --line: rgba(255, 255, 255, 0.12);
+        --cyan: #50d5e5;
+        --amber: #f4b942;
+        --coral: #ff6b5d;
+        --green: #5bdb98;
+    }
+
+    * { box-sizing: border-box; }
+
     body {
         margin: 0;
         overflow: hidden;
-        background: #111;
-        color: white;
-        font-family: Arial, sans-serif;
+        background: #0c1010;
+        color: var(--ink);
+        font-family: Bahnschrift, "Segoe UI Variable", sans-serif;
+        letter-spacing: 0;
     }
 
     #overlay {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        background: rgba(0,0,0,0.6);
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        padding: 12px 14px;
+        background: rgba(8, 12, 12, 0.78);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        z-index: 10;
+        font-size: 13px;
+        line-height: 1.55;
+        backdrop-filter: blur(10px);
+    }
+
+    #tuning-panel {
+        position: fixed;
+        inset: 0 0 0 auto;
+        width: min(430px, 40vw);
+        min-width: 360px;
+        z-index: 9;
+        overflow-y: auto;
+        padding: 22px;
+        background: var(--panel);
+        border-left: 1px solid var(--line);
+        backdrop-filter: blur(18px);
+        animation: panel-in 420ms ease-out both;
+    }
+
+    @keyframes panel-in {
+        from { opacity: 0; transform: translateX(24px); }
+        to { opacity: 1; transform: translateX(0); }
+    }
+
+    .panel-header, .section-head, .apply-row, .metric-grid {
+        display: flex;
+        align-items: center;
+    }
+
+    .panel-header { justify-content: space-between; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 21px; font-weight: 650; }
+    .eyebrow { color: var(--green); font: 600 11px/1 monospace; text-transform: uppercase; }
+    .section-head { justify-content: space-between; margin-bottom: 10px; }
+    h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; }
+
+    .status-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--coral);
+        box-shadow: 0 0 12px currentColor;
+    }
+
+    .status-dot.online { background: var(--green); }
+
+    .arm-control {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 18px;
+        padding: 12px;
+        background: #080c0c;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+    }
+    .arm-state { color: var(--muted); font-size: 12px; }
+    .arm-state strong { display: block; margin-top: 3px; color: var(--ink); font-size: 15px; }
+    #arm-esc {
+        min-width: 112px;
+        padding: 10px 14px;
+        border: 1px solid var(--coral);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--coral);
+        font-weight: 700;
+    }
+    #arm-esc.armed { border-color: var(--green); background: var(--green); color: #07130d; }
+    #arm-esc:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .axis-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+        padding: 4px;
+        margin-bottom: 18px;
+        background: #080c0c;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+    }
+
+    button, input { font: inherit; }
+    button { color: var(--ink); cursor: pointer; }
+    .axis-tab {
+        height: 34px;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+    }
+    .axis-tab.active { background: #263130; color: var(--green); }
+
+    .gain-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-bottom: 12px;
+    }
+
+    label { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    .gain-field input {
+        width: 100%;
+        margin-top: 6px;
         padding: 10px;
-        border-radius: 5px;
-        z-index: 100;
+        color: var(--ink);
+        background: #090d0d;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        outline: none;
+    }
+    .gain-field input:focus { border-color: var(--green); }
+
+    .apply-row { justify-content: space-between; gap: 12px; margin-bottom: 24px; }
+    .apply-row label { display: flex; align-items: center; gap: 7px; text-transform: none; }
+    #apply-gains {
+        min-width: 112px;
+        padding: 10px 14px;
+        border: 0;
+        border-radius: 4px;
+        color: #07130d;
+        background: var(--green);
+        font-weight: 700;
+    }
+    #apply-gains:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .chart-block { margin-bottom: 20px; }
+    canvas {
+        display: block;
+        width: 100%;
+        height: 170px;
+        background: #080c0c;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+    }
+    #output-chart { height: 100px; }
+    .legend { display: flex; gap: 14px; color: var(--muted); font-size: 11px; }
+    .legend span::before {
+        content: "";
+        display: inline-block;
+        width: 14px;
+        height: 2px;
+        margin-right: 5px;
+        vertical-align: middle;
+        background: currentColor;
+    }
+    .legend .setpoint { color: var(--amber); }
+    .legend .measurement { color: var(--cyan); }
+    .legend .error { color: var(--coral); }
+
+    .icon-button {
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: transparent;
+        font-size: 18px;
+        line-height: 1;
+    }
+
+    .metric-grid { align-items: stretch; gap: 1px; background: var(--line); }
+    .metric {
+        flex: 1;
+        padding: 12px 8px;
+        background: var(--panel);
+    }
+    .metric span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; }
+    .metric strong { display: block; margin-top: 5px; font: 600 18px/1 monospace; }
+
+    @media (max-width: 760px) {
+        #overlay { top: 8px; left: 8px; font-size: 11px; }
+        #tuning-panel {
+            inset: auto 0 0 0;
+            width: 100%;
+            min-width: 0;
+            height: 58vh;
+            padding: 16px;
+            border-left: 0;
+            border-top: 1px solid var(--line);
+        }
+        canvas { height: 135px; }
     }
 </style>
 </head>
@@ -34,8 +228,62 @@
     <div>Link: <span id="ws-status">connecting...</span></div>
     <div>Pad: <span id="pad-status">searching...</span></div>
     <div>Cmd: T <span id="cmd-throttle">0.00</span> R <span id="cmd-roll">0.00</span> P <span id="cmd-pitch">0.00</span> Y <span id="cmd-yaw">0.00</span></div>
-    <div>ESC: <span id="arm-status">disarmed</span> <button id="arm-btn" type="button">Arm</button></div>
 </div>
+
+<aside id="tuning-panel">
+    <header class="panel-header">
+        <div>
+            <div class="eyebrow">Control Lab</div>
+            <h1>PID tuning</h1>
+        </div>
+        <span id="tuning-status" class="status-dot" title="WebSocket status"></span>
+    </header>
+
+    <div class="arm-control">
+        <div class="arm-state">Motor output<strong id="arm-state">Disarmed</strong></div>
+        <button id="arm-esc" disabled>Arm ESC</button>
+    </div>
+
+    <div class="axis-tabs" role="tablist" aria-label="PID axis">
+        <button class="axis-tab active" data-axis="roll" role="tab">Roll</button>
+        <button class="axis-tab" data-axis="pitch" role="tab">Pitch</button>
+    </div>
+
+    <div class="gain-grid">
+        <label class="gain-field">P<input id="gain-p" type="number" min="0" max="100" step="0.01" value="1.00"></label>
+        <label class="gain-field">I<input id="gain-i" type="number" min="0" max="100" step="0.001" value="0.000"></label>
+        <label class="gain-field">D<input id="gain-d" type="number" min="0" max="100" step="0.001" value="0.000"></label>
+    </div>
+    <div class="apply-row">
+        <label><input id="apply-both" type="checkbox"> Apply to both axes</label>
+        <button id="apply-gains" disabled>Apply gains</button>
+    </div>
+
+    <section class="chart-block">
+        <div class="section-head">
+            <h2>Response · degrees</h2>
+            <button id="clear-history" class="icon-button" title="Clear graph" aria-label="Clear graph">×</button>
+        </div>
+        <canvas id="response-chart"></canvas>
+        <div class="legend">
+            <span class="setpoint">Setpoint</span>
+            <span class="measurement">Measured</span>
+            <span class="error">Error</span>
+        </div>
+    </section>
+
+    <section class="chart-block">
+        <div class="section-head"><h2>Controller output · normalized</h2></div>
+        <canvas id="output-chart"></canvas>
+    </section>
+
+    <div class="metric-grid">
+        <div class="metric"><span>Error</span><strong id="metric-error">0.00°</strong></div>
+        <div class="metric"><span>RMS</span><strong id="metric-rms">0.00°</strong></div>
+        <div class="metric"><span>Peak</span><strong id="metric-peak">0.00°</strong></div>
+        <div class="metric"><span>Output</span><strong id="metric-output">0.000</strong></div>
+    </div>
+</aside>
 
 <script type="module">
 import * as THREE from './three.module.js';
@@ -210,34 +458,187 @@ const gamepadDisplay = {
 
 const wsStatus = document.getElementById("ws-status");
 const padStatus = document.getElementById("pad-status");
-const armStatus = document.getElementById("arm-status");
-const armButton = document.getElementById("arm-btn");
 let reconnectDelayMs = 500;
 let ws = null;
-let armed = false;
+let activeAxis = "roll";
 
-function setArmed(next)
-{
-    armed = next;
-    armStatus.textContent = armed ? "armed" : "disarmed";
-    armButton.textContent = armed ? "Disarm" : "Arm";
-}
-
-function sendArmRequest(next)
-{
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ t: "arm", armed: next }));
-}
-
-armButton.addEventListener("click", () =>
-{
-    sendArmRequest(!armed);
-    setArmed(!armed);
-});
+const pidState = {
+    roll: { sp: 0, pv: 0, err: 0, out: 0, kp: 1, ki: 0, kd: 0 },
+    pitch: { sp: 0, pv: 0, err: 0, out: 0, kp: 1, ki: 0, kd: 0 }
+};
+const gainDrafts = { roll: null, pitch: null };
+const histories = { roll: [], pitch: [] };
+const tuningStatus = document.getElementById("tuning-status");
+const gainInputs = [
+    document.getElementById("gain-p"),
+    document.getElementById("gain-i"),
+    document.getElementById("gain-d")
+];
+const applyButton = document.getElementById("apply-gains");
+const armButton = document.getElementById("arm-esc");
+const armState = document.getElementById("arm-state");
+const responseCanvas = document.getElementById("response-chart");
+const outputCanvas = document.getElementById("output-chart");
+let escArmed = false;
+let pendingArmState = null;
 
 function setStatus(text)
 {
     wsStatus.textContent = text;
+    tuningStatus.classList.toggle("online", text === "online");
+    applyButton.disabled = text !== "online";
+    armButton.disabled = text !== "online" || pendingArmState !== null;
+    if (text !== "online") {
+        escArmed = false;
+        pendingArmState = null;
+        updateArmControl();
+    }
+}
+
+function syncGainInputs()
+{
+    const state = pidState[activeAxis];
+    const draft = gainDrafts[activeAxis];
+    if (draft) {
+        gainInputs.forEach((input, index) => input.value = draft[index]);
+    } else {
+        gainInputs[0].value = state.kp.toFixed(4);
+        gainInputs[1].value = state.ki.toFixed(4);
+        gainInputs[2].value = state.kd.toFixed(4);
+    }
+}
+
+function updateArmControl()
+{
+    const displayedState = pendingArmState === null ? escArmed : pendingArmState;
+    armState.textContent = pendingArmState === null
+        ? (escArmed ? "Armed" : "Disarmed")
+        : (pendingArmState ? "Arming..." : "Disarming...");
+    armButton.textContent = displayedState ? "Disarm ESC" : "Arm ESC";
+    armButton.classList.toggle("armed", displayedState);
+    armButton.disabled = !ws || ws.readyState !== WebSocket.OPEN || pendingArmState !== null;
+}
+
+function sendArmRequest()
+{
+    if (!ws || ws.readyState !== WebSocket.OPEN || pendingArmState !== null) return;
+    pendingArmState = !escArmed;
+    ws.send(JSON.stringify({ t: "esc_arm", armed: pendingArmState }));
+    updateArmControl();
+}
+
+function selectAxis(axis)
+{
+    activeAxis = axis;
+    document.querySelectorAll(".axis-tab").forEach(button =>
+        button.classList.toggle("active", button.dataset.axis === axis));
+    syncGainInputs();
+    drawCharts();
+}
+
+function sendPidGains()
+{
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const values = gainInputs.map(input => Number(input.value));
+    if (values.some(value => !Number.isFinite(value) || value < 0 || value > 100)) return;
+
+    ws.send(JSON.stringify({
+        t: "pid_tune",
+        axis: document.getElementById("apply-both").checked ? "both" : activeAxis,
+        kp: values[0],
+        ki: values[1],
+        kd: values[2]
+    }));
+}
+
+function gainsMatchDraft(axis)
+{
+    const draft = gainDrafts[axis];
+    if (!draft) return false;
+    const values = draft.map(Number);
+    const state = pidState[axis];
+    return values.every(Number.isFinite) &&
+        Math.abs(values[0] - state.kp) < 0.00005 &&
+        Math.abs(values[1] - state.ki) < 0.00005 &&
+        Math.abs(values[2] - state.kd) < 0.00005;
+}
+
+function recordPidTelemetry(pid)
+{
+    for (const axis of ["roll", "pitch"]) {
+        if (!pid[axis]) continue;
+        Object.assign(pidState[axis], pid[axis]);
+        if (gainsMatchDraft(axis)) gainDrafts[axis] = null;
+        const history = histories[axis];
+        history.push({ ...pidState[axis] });
+        if (history.length > 300) history.shift();
+    }
+    syncGainInputs();
+    updatePidMetrics();
+    drawCharts();
+}
+
+function updatePidMetrics()
+{
+    const history = histories[activeAxis];
+    const current = pidState[activeAxis];
+    const rms = history.length
+        ? Math.sqrt(history.reduce((sum, point) => sum + point.err * point.err, 0) / history.length)
+        : 0;
+    const peak = history.reduce((max, point) => Math.max(max, Math.abs(point.err)), 0);
+    document.getElementById("metric-error").textContent = `${current.err.toFixed(2)}°`;
+    document.getElementById("metric-rms").textContent = `${rms.toFixed(2)}°`;
+    document.getElementById("metric-peak").textContent = `${peak.toFixed(2)}°`;
+    document.getElementById("metric-output").textContent = current.out.toFixed(3);
+}
+
+function drawPlot(canvas, series, fixedRange = null)
+{
+    const ratio = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (canvas.width !== width * ratio || canvas.height !== height * ratio) {
+        canvas.width = width * ratio;
+        canvas.height = height * ratio;
+    }
+    const context = canvas.getContext("2d");
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, width, height);
+
+    const allValues = series.flatMap(item => item.values);
+    const extent = fixedRange ?? Math.max(5, ...allValues.map(Math.abs)) * 1.15;
+    context.strokeStyle = "rgba(255,255,255,.09)";
+    context.lineWidth = 1;
+    for (let row = 1; row < 4; row++) {
+        const y = row * height / 4;
+        context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke();
+    }
+
+    for (const item of series) {
+        if (item.values.length < 2) continue;
+        context.strokeStyle = item.color;
+        context.lineWidth = item.width ?? 1.5;
+        context.beginPath();
+        item.values.forEach((value, index) => {
+            const x = index * width / Math.max(1, item.values.length - 1);
+            const y = height / 2 - (value / extent) * (height * 0.44);
+            if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
+        });
+        context.stroke();
+    }
+}
+
+function drawCharts()
+{
+    const history = histories[activeAxis];
+    drawPlot(responseCanvas, [
+        { values: history.map(point => point.sp), color: "#f4b942" },
+        { values: history.map(point => point.pv), color: "#50d5e5", width: 2 },
+        { values: history.map(point => point.err), color: "#ff6b5d" }
+    ]);
+    drawPlot(outputCanvas, [
+        { values: history.map(point => point.out), color: "#5bdb98", width: 2 }
+    ], 1);
 }
 
 function setPadStatus(text)
@@ -354,7 +755,6 @@ function connectWebSocket()
     {
         reconnectDelayMs = 500;
         setStatus("online");
-        setArmed(false);
     });
 
     ws.addEventListener("message", (event) =>
@@ -367,6 +767,15 @@ function connectWebSocket()
             if (typeof data.pitch === "number") pitch = data.pitch;
             if (typeof data.roll === "number")  roll = data.roll;
             if (typeof data.yaw === "number")   yaw = data.yaw;
+            if (typeof data.armed === "boolean") {
+                escArmed = data.armed;
+                if (pendingArmState === escArmed ||
+                    (typeof data.armRequested === "boolean" && data.armRequested !== pendingArmState)) {
+                    pendingArmState = null;
+                }
+                updateArmControl();
+            }
+            if (data.pid) recordPidTelemetry(data.pid);
         }
         catch (err)
         {
@@ -377,7 +786,6 @@ function connectWebSocket()
     ws.addEventListener("close", () =>
     {
         setStatus("reconnecting...");
-        setArmed(false);
         setTimeout(connectWebSocket, reconnectDelayMs);
         reconnectDelayMs = Math.min(reconnectDelayMs * 2, 5000);
     });
@@ -416,6 +824,20 @@ setInterval(() => {
 }, 20);
 
 connectWebSocket();
+
+document.querySelectorAll(".axis-tab").forEach(button =>
+    button.addEventListener("click", () => selectAxis(button.dataset.axis)));
+gainInputs.forEach(input => input.addEventListener("input", () => {
+    gainDrafts[activeAxis] = gainInputs.map(field => field.value);
+}));
+applyButton.addEventListener("click", sendPidGains);
+armButton.addEventListener("click", sendArmRequest);
+document.getElementById("clear-history").addEventListener("click", () => {
+    histories[activeAxis].length = 0;
+    updatePidMetrics();
+    drawCharts();
+});
+drawCharts();
 
 window.addEventListener("gamepadconnected", (event) =>
 {
@@ -475,6 +897,7 @@ window.addEventListener('resize', () =>
         window.innerWidth,
         window.innerHeight
     );
+    drawCharts();
 });
 </script>
 

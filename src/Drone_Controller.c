@@ -39,7 +39,10 @@ void initialize_subsystems() {
         }
     }
 
-    init_ESC();
+    if (!init_ESC()) {
+        printf("ESC init failed\n");
+    }
+    disarm_ESC();
 }
 
 void main_loop() {
@@ -53,6 +56,8 @@ void main_loop() {
     bool filter_seeded = false;
     absolute_time_t last_update = get_absolute_time();
     absolute_time_t last_controller_log = get_absolute_time();
+    uint32_t pid_tuning_revision = 0;
+    uint32_t esc_arm_revision = 0;
 
     kalman_1d_init(&roll_kalman, 0.001f, 0.003f, 0.03f);
     kalman_1d_init(&pitch_kalman, 0.001f, 0.003f, 0.03f);
@@ -61,13 +66,39 @@ void main_loop() {
     pid_init(&pitch_pid, ROLL_PITCH_P, ROLL_PITCH_I, ROLL_PITCH_D, -1.0f, 1.0f);
 
     while (true) {
-        bool arm_requested = networking_get_arm_request();
-        if (arm_requested != esc_is_armed()) {
+        bool arm_requested;
+        uint32_t arm_revision;
+        networking_get_esc_arm_request(&arm_requested, &arm_revision);
+        if (arm_revision != esc_arm_revision) {
             if (arm_requested) {
-                arm_ESC();
+                networking_gamepad_t gamepad = {0};
+                networking_get_gamepad(&gamepad);
+                if (gamepad.connected && gamepad.throttle > GAMEPAD_DEADBAND) {
+                    printf("ESC arm rejected: throttle must be zero\n");
+                    networking_set_esc_arm_request(false);
+                } else {
+                    arm_ESC();
+                }
             } else {
                 disarm_ESC();
             }
+            esc_arm_revision = arm_revision;
+        }
+
+        networking_pid_gains_t roll_gains;
+        networking_pid_gains_t pitch_gains;
+        uint32_t tuning_revision;
+        networking_get_pid_tuning(&roll_gains, &pitch_gains, &tuning_revision);
+        if (tuning_revision != pid_tuning_revision) {
+            roll_pid.kp = roll_gains.kp;
+            roll_pid.ki = roll_gains.ki;
+            roll_pid.kd = roll_gains.kd;
+            pitch_pid.kp = pitch_gains.kp;
+            pitch_pid.ki = pitch_gains.ki;
+            pitch_pid.kd = pitch_gains.kd;
+            pid_reset(&roll_pid);
+            pid_reset(&pitch_pid);
+            pid_tuning_revision = tuning_revision;
         }
 
         if (!lsm6dsv32x_read_sample(&sample)) {
@@ -126,7 +157,25 @@ void main_loop() {
             esc_send_normalized(m1, m2, m3, m4);
         }
 
-        networking_set_telemetry(pitch_deg, roll_deg, 0.0f);
+        networking_telemetry_t telemetry = {
+            .pitch_deg = pitch_deg,
+            .roll_deg = roll_deg,
+            .yaw_deg = 0.0f,
+            .esc_armed = esc_is_armed(),
+            .pitch_pid = {
+                .setpoint = pitch_pid.setpoint,
+                .measurement = pitch_pid.measurement,
+                .error = pitch_pid.setpoint - pitch_pid.measurement,
+                .output = pitch_pid.last_output,
+            },
+            .roll_pid = {
+                .setpoint = roll_pid.setpoint,
+                .measurement = roll_pid.measurement,
+                .error = roll_pid.setpoint - roll_pid.measurement,
+                .output = roll_pid.last_output,
+            },
+        };
+        networking_set_telemetry(&telemetry);
     }
 }
 
