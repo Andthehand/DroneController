@@ -115,10 +115,10 @@ void main_loop() {
             dt_s = 0.002f;
         }
 
-        float accel_roll_deg = atan2f(sample.accel_g[1], sample.accel_g[2]) * rad_to_deg;
-        float accel_pitch_deg = atan2f(-sample.accel_g[0],
-                                       sqrtf((sample.accel_g[1] * sample.accel_g[1]) +
-                                             (sample.accel_g[2] * sample.accel_g[2]))) * rad_to_deg;
+          float accel_pitch_deg = atan2f(sample.accel_g[1], sample.accel_g[2]) * rad_to_deg;
+          float accel_roll_deg = atan2f(-sample.accel_g[0],
+                              sqrtf((sample.accel_g[1] * sample.accel_g[1]) +
+                                  (sample.accel_g[2] * sample.accel_g[2]))) * rad_to_deg;
 
         if (!filter_seeded) {
             kalman_1d_set_angle(&roll_kalman, accel_roll_deg);
@@ -126,8 +126,8 @@ void main_loop() {
             filter_seeded = true;
         }
 
-        float roll_deg = kalman_1d_update(&roll_kalman, accel_roll_deg, sample.gyro_dps[0], dt_s);
-        float pitch_deg = kalman_1d_update(&pitch_kalman, accel_pitch_deg, sample.gyro_dps[1], dt_s);
+        float pitch_deg = kalman_1d_update(&pitch_kalman, accel_pitch_deg, sample.gyro_dps[0], dt_s);
+        float roll_deg = kalman_1d_update(&roll_kalman, accel_roll_deg, sample.gyro_dps[1], dt_s);
 
         // From -1 to 1
         float throttle_cmd = 0.0f;
