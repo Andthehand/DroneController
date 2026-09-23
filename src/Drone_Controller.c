@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <math.h>
 #include "pico/stdlib.h"
-#include "pico/multicore.h"
 
 #include "config.h"
 #include "networking.h"
@@ -55,7 +54,6 @@ void main_loop() {
     const float rad_to_deg = 57.2957795f;
     bool filter_seeded = false;
     absolute_time_t last_update = get_absolute_time();
-    absolute_time_t last_controller_log = get_absolute_time();
     uint32_t pid_tuning_revision = 0;
     uint32_t esc_arm_revision = 0;
 

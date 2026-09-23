@@ -84,7 +84,7 @@ static bool lsm6_read_regs(uint8_t start_reg, uint8_t *buf, size_t len) {
 	return written == 1 && read == (int)len;
 }
 
-uint8_t lsm6dsv32x_read_who_am_i(void) {
+static uint8_t lsm6dsv32x_read_who_am_i(void) {
 	uint8_t who_am_i = 0;
     
 	if (!lsm6_read_regs(LSM6_REG_WHO_AM_I, &who_am_i, 1)) {
@@ -95,7 +95,8 @@ uint8_t lsm6dsv32x_read_who_am_i(void) {
 }
 
 bool lsm6dsv32x_init(void) {
-	spi_init(IMU_SPI, 1 * 1000 * 1000);
+	/* LSM6DSV32X SPI supports up to 10 MHz; run near that ceiling to shrink read time. */
+	spi_init(IMU_SPI, 8 * 1000 * 1000);
 	spi_set_format(IMU_SPI, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
 
 	gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
@@ -147,18 +148,17 @@ bool lsm6dsv32x_init(void) {
 	return true;
 }
 
-bool lsm6dsv32x_read_raw(int16_t accel_raw[3], int16_t gyro_raw[3]) {
+static bool lsm6dsv32x_read_raw(int16_t accel_raw[3], int16_t gyro_raw[3]) {
 	if (!s_initialized || accel_raw == NULL || gyro_raw == NULL) {
 		return false;
 	}
 
-	uint8_t gyro_bytes[6] = {0};
-	uint8_t accel_bytes[6] = {0};
+	/* OUTX_L_G (0x22) through OUTZ_H_A (0x2D) are contiguous, so read both in one burst. */
+	uint8_t burst[12] = {0};
+	uint8_t *gyro_bytes = burst;
+	uint8_t *accel_bytes = burst + 6;
 
-	if (!lsm6_read_regs(LSM6_REG_OUTX_L_G, gyro_bytes, sizeof(gyro_bytes))) {
-		return false;
-	}
-	if (!lsm6_read_regs(LSM6_REG_OUTX_L_A, accel_bytes, sizeof(accel_bytes))) {
+	if (!lsm6_read_regs(LSM6_REG_OUTX_L_G, burst, sizeof(burst))) {
 		return false;
 	}
 

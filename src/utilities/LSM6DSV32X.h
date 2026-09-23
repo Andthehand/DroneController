@@ -12,6 +12,3 @@ typedef struct {
 
 bool lsm6dsv32x_init(void);
 bool lsm6dsv32x_read_sample(lsm6dsv32x_sample_t *sample);
-bool lsm6dsv32x_read_raw(int16_t accel_raw[3], int16_t gyro_raw[3]);
-uint8_t lsm6dsv32x_read_who_am_i(void);
-
