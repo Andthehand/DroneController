@@ -56,6 +56,9 @@ void main_loop() {
     absolute_time_t last_update = get_absolute_time();
     uint32_t pid_tuning_revision = 0;
     uint32_t esc_arm_revision = 0;
+    uint64_t pid_rate_window_start_us = time_us_64();
+    uint32_t pid_rate_update_count = 0;
+    float pid_loop_hz = 0.0f;
 
     kalman_1d_init(&roll_kalman, 0.001f, 0.003f, 0.03f);
     kalman_1d_init(&pitch_kalman, 0.001f, 0.003f, 0.03f);
@@ -146,6 +149,7 @@ void main_loop() {
             // Update Stabolize PIDs
             float pitch_mix = pid_update(&pitch_pid, pitch_cmd * MAX_PITCH_DEGREE, pitch_deg, dt_s);
             float roll_mix = pid_update(&roll_pid, roll_cmd * MAX_ROLL_DEGREE, roll_deg, dt_s);
+            pid_rate_update_count++;
             float yaw_mix = yaw_cmd * MAX_YAW_MIX;
 
             float m1 = throttle_cmd + pitch_mix + roll_mix + yaw_mix; // Front Right
@@ -155,10 +159,19 @@ void main_loop() {
             esc_send_normalized(m1, m2, m3, m4);
         }
 
+        uint64_t pid_rate_now_us = time_us_64();
+        uint64_t pid_rate_elapsed_us = pid_rate_now_us - pid_rate_window_start_us;
+        if (pid_rate_elapsed_us >= 1000000u) {
+            pid_loop_hz = (float)pid_rate_update_count * 1000000.0f / (float)pid_rate_elapsed_us;
+            pid_rate_update_count = 0;
+            pid_rate_window_start_us = pid_rate_now_us;
+        }
+
         networking_telemetry_t telemetry = {
             .pitch_deg = pitch_deg,
             .roll_deg = roll_deg,
             .yaw_deg = 0.0f,
+            .pid_loop_hz = pid_loop_hz,
             .esc_armed = esc_is_armed(),
             .pitch_pid = {
                 .setpoint = pitch_pid.setpoint,

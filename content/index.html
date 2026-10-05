@@ -226,6 +226,7 @@
     <div>Pitch: <span id="pitch">0.0</span>°</div>
     <div>Roll: <span id="roll">0.0</span>°</div>
     <div>Yaw: <span id="yaw">0.0</span>°</div>
+    <div>PID loop: <span id="pid-loop-hz">--</span> Hz</div>
     <div>Link: <span id="ws-status">connecting...</span></div>
     <div>Pad: <span id="pad-status">searching...</span></div>
     <div>Cmd: T <span id="cmd-throttle">0.00</span> R <span id="cmd-roll">0.00</span> P <span id="cmd-pitch">0.00</span> Y <span id="cmd-yaw">0.00</span></div>
@@ -460,6 +461,7 @@ const gamepadDisplay = {
 
 const wsStatus = document.getElementById("ws-status");
 const padStatus = document.getElementById("pad-status");
+const pidLoopHz = document.getElementById("pid-loop-hz");
 let reconnectDelayMs = 500;
 let ws = null;
 let activeAxis = "roll";
@@ -777,6 +779,9 @@ function connectWebSocket()
             if (typeof data.pitch === "number") pitch = data.pitch;
             if (typeof data.roll === "number")  roll = data.roll;
             if (typeof data.yaw === "number")   yaw = data.yaw;
+            if (typeof data.pidLoopHz === "number" && Number.isFinite(data.pidLoopHz)) {
+                pidLoopHz.textContent = data.pidLoopHz.toFixed(1);
+            }
             if (typeof data.armed === "boolean") {
                 escArmed = data.armed;
                 if (pendingArmState === escArmed ||
@@ -795,6 +800,7 @@ function connectWebSocket()
 
     ws.addEventListener("close", () =>
     {
+        pidLoopHz.textContent = "--";
         setStatus("reconnecting...");
         setTimeout(connectWebSocket, reconnectDelayMs);
         reconnectDelayMs = Math.min(reconnectDelayMs * 2, 5000);
@@ -802,6 +808,7 @@ function connectWebSocket()
 
     ws.addEventListener("error", () =>
     {
+        pidLoopHz.textContent = "--";
         setStatus("error");
         ws.close();
     });

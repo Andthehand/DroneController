@@ -30,6 +30,7 @@ typedef struct {
 	float pitch_deg;
 	float roll_deg;
 	float yaw_deg;
+	float pid_loop_hz;
 	bool esc_armed;
 	networking_pid_sample_t pitch_pid;
 	networking_pid_sample_t roll_pid;

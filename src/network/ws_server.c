@@ -821,13 +821,14 @@ void ws_server_broadcast_telemetry(const networking_telemetry_t *telemetry,
     int len = snprintf(
         json,
         sizeof(json),
-        "{\"t\":\"telemetry\",\"seq\":%lu,\"pitch\":%.2f,\"roll\":%.2f,\"yaw\":%.2f,\"armed\":%s,\"armRequested\":%s,"
+        "{\"t\":\"telemetry\",\"seq\":%lu,\"pitch\":%.2f,\"roll\":%.2f,\"yaw\":%.2f,\"pidLoopHz\":%.1f,\"armed\":%s,\"armRequested\":%s,"
         "\"pid\":{\"roll\":{\"sp\":%.2f,\"pv\":%.2f,\"err\":%.2f,\"out\":%.3f,\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},"
         "\"pitch\":{\"sp\":%.2f,\"pv\":%.2f,\"err\":%.2f,\"out\":%.3f,\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f}}}",
         (unsigned long)seq++,
         telemetry->pitch_deg,
         telemetry->roll_deg,
         telemetry->yaw_deg,
+        telemetry->pid_loop_hz,
         telemetry->esc_armed ? "true" : "false",
         arm_requested ? "true" : "false",
         telemetry->roll_pid.setpoint,
