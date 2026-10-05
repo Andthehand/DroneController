@@ -125,7 +125,7 @@ void main_loop() {
         }
 
         float pitch_deg = kalman_1d_update(&pitch_kalman, accel_pitch_deg, sample.gyro_dps[0], dt_s);
-        float roll_deg = kalman_1d_update(&roll_kalman, accel_roll_deg, sample.gyro_dps[1], dt_s);
+        float roll_deg = -kalman_1d_update(&roll_kalman, accel_roll_deg, sample.gyro_dps[1], dt_s);
 
         // From -1 to 1
         float throttle_cmd = 0.0f;
