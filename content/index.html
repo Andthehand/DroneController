@@ -172,7 +172,7 @@
         border-radius: 4px;
     }
     #output-chart { height: 100px; }
-    .legend { display: flex; gap: 14px; color: var(--muted); font-size: 11px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 11px; }
     .legend span::before {
         content: "";
         display: inline-block;
@@ -185,6 +185,11 @@
     .legend .setpoint { color: var(--amber); }
     .legend .measurement { color: var(--cyan); }
     .legend .error { color: var(--coral); }
+    .legend .motor-1 { color: var(--amber); }
+    .legend .motor-2 { color: var(--cyan); }
+    .legend .motor-3 { color: var(--coral); }
+    .legend .motor-4 { color: var(--green); }
+    .legend output { font-family: monospace; }
 
     .icon-button {
         width: 30px;
@@ -278,6 +283,17 @@
     <section class="chart-block">
         <div class="section-head"><h2>Controller output · normalized</h2></div>
         <canvas id="output-chart"></canvas>
+    </section>
+
+    <section class="chart-block">
+        <div class="section-head"><h2>Motor mix · normalized</h2></div>
+        <canvas id="motor-chart" aria-label="Raw motor mixer values M1 through M4"></canvas>
+        <div class="legend">
+            <span class="motor-1">M1 <output id="motor-1-value">0.000</output></span>
+            <span class="motor-2">M2 <output id="motor-2-value">0.000</output></span>
+            <span class="motor-3">M3 <output id="motor-3-value">0.000</output></span>
+            <span class="motor-4">M4 <output id="motor-4-value">0.000</output></span>
+        </div>
     </section>
 
     <div class="metric-grid">
@@ -472,6 +488,8 @@ const pidState = {
 };
 const gainDrafts = { roll: null, pitch: null };
 const histories = { roll: [], pitch: [] };
+const motorHistory = [];
+const motorColors = ["#f4b942", "#50d5e5", "#ff6b5d", "#5bdb98"];
 const tuningStatus = document.getElementById("tuning-status");
 const gainInputs = [
     document.getElementById("gain-p"),
@@ -484,6 +502,7 @@ const armButton = document.getElementById("arm-esc");
 const armState = document.getElementById("arm-state");
 const responseCanvas = document.getElementById("response-chart");
 const outputCanvas = document.getElementById("output-chart");
+const motorCanvas = document.getElementById("motor-chart");
 let escArmed = false;
 let pendingArmState = null;
 
@@ -590,6 +609,16 @@ function recordPidTelemetry(pid)
     drawCharts();
 }
 
+function recordMotorTelemetry(motors)
+{
+    if (!Array.isArray(motors) || motors.length !== 4 || !motors.every(Number.isFinite)) return;
+    motorHistory.push([...motors]);
+    if (motorHistory.length > 300) motorHistory.shift();
+    motors.forEach((value, index) => {
+        document.getElementById(`motor-${index + 1}-value`).textContent = value.toFixed(3);
+    });
+}
+
 function updatePidMetrics()
 {
     const history = histories[activeAxis];
@@ -651,6 +680,10 @@ function drawCharts()
     drawPlot(outputCanvas, [
         { values: history.map(point => point.out), color: "#5bdb98", width: 2 }
     ], 1);
+    const motorExtent = Math.max(0.3, ...motorHistory.flat().map(Math.abs)) * 1.15;
+    drawPlot(motorCanvas, motorColors.map((color, index) => ({
+        values: motorHistory.map(point => point[index]), color, width: 2
+    })), motorExtent);
 }
 
 function setPadStatus(text)
@@ -790,7 +823,9 @@ function connectWebSocket()
                 }
                 updateArmControl();
             }
+            if (data.motors) recordMotorTelemetry(data.motors);
             if (data.pid) recordPidTelemetry(data.pid);
+            else drawCharts();
         }
         catch (err)
         {
@@ -852,6 +887,7 @@ saveButton.addEventListener("click", savePidGains);
 armButton.addEventListener("click", sendArmRequest);
 document.getElementById("clear-history").addEventListener("click", () => {
     histories[activeAxis].length = 0;
+    motorHistory.length = 0;
     updatePidMetrics();
     drawCharts();
 });

@@ -28,6 +28,7 @@ static networking_telemetry_t s_telemetry = {0};
 static bool s_telemetry_ready = false;
 static critical_section_t s_gamepad_lock;
 static gamepad_state_t s_gamepad = {0.0f, 0.0f, 0.0f, 0.0f, 0u, false, false};
+static uint64_t s_last_gamepad_us = 0;
 static critical_section_t s_pid_tuning_lock;
 static networking_pid_gains_t s_roll_gains = {ROLL_PITCH_P, ROLL_PITCH_I, ROLL_PITCH_D};
 static networking_pid_gains_t s_pitch_gains = {ROLL_PITCH_P, ROLL_PITCH_I, ROLL_PITCH_D};
@@ -114,6 +115,14 @@ void networking_set_gamepad(float throttle, float roll, float pitch, float yaw, 
     s_gamepad.buttons = buttons;
     s_gamepad.connected = connected;
     s_gamepad.ready = true;
+    s_last_gamepad_us = time_us_64();
+    critical_section_exit(&s_gamepad_lock);
+}
+
+void networking_clear_gamepad(void) {
+    critical_section_enter_blocking(&s_gamepad_lock);
+    s_gamepad = (gamepad_state_t){0};
+    s_last_gamepad_us = 0;
     critical_section_exit(&s_gamepad_lock);
 }
 
@@ -130,6 +139,7 @@ void networking_get_gamepad(networking_gamepad_t *state) {
     state->buttons = s_gamepad.buttons;
     state->connected = s_gamepad.connected;
     state->ready = s_gamepad.ready;
+    state->last_update_us = s_last_gamepad_us;
     critical_section_exit(&s_gamepad_lock);
 }
 

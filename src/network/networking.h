@@ -11,6 +11,7 @@ typedef struct {
 	uint32_t buttons;
 	bool connected;
 	bool ready;
+	uint64_t last_update_us;
 } networking_gamepad_t;
 
 typedef struct {
@@ -32,6 +33,7 @@ typedef struct {
 	float yaw_deg;
 	float pid_loop_hz;
 	bool esc_armed;
+	float motor_mix[4];
 	networking_pid_sample_t pitch_pid;
 	networking_pid_sample_t roll_pid;
 } networking_telemetry_t;
@@ -41,6 +43,7 @@ void networking_set_telemetry(const networking_telemetry_t *telemetry);
 void networking_get_telemetry(networking_telemetry_t *telemetry);
 bool networking_telemetry_ready(void);
 void networking_set_gamepad(float throttle, float roll, float pitch, float yaw, uint32_t buttons, bool connected);
+void networking_clear_gamepad(void);
 void networking_get_gamepad(networking_gamepad_t *state);
 bool networking_gamepad_ready(void);
 bool networking_set_pid_tuning(const char *axis, float kp, float ki, float kd);

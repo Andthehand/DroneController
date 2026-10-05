@@ -67,15 +67,27 @@ void main_loop() {
     pid_init(&pitch_pid, ROLL_PITCH_P, ROLL_PITCH_I, ROLL_PITCH_D, -1.0f, 1.0f);
 
     while (true) {
+        // sleep_until(delayed_by_us(last_update, CONTROL_LOOP_INTERVAL_US));
+
         bool arm_requested;
         uint32_t arm_revision;
         networking_get_esc_arm_request(&arm_requested, &arm_revision);
+        networking_gamepad_t gamepad = {0};
+        networking_get_gamepad(&gamepad);
+        bool control_connected = gamepad.ready &&
+                     time_us_64() - gamepad.last_update_us < GAMEPAD_TIMEOUT_US;
+        if (!control_connected && (arm_requested || esc_is_armed())) {
+            disarm_ESC();
+            networking_set_esc_arm_request(false);
+            pid_reset(&roll_pid);
+            pid_reset(&pitch_pid);
+            arm_requested = false;
+            printf("Failsafe: browser disconnected or timed out\n");
+        }
         if (arm_revision != esc_arm_revision) {
             if (arm_requested) {
-                networking_gamepad_t gamepad = {0};
-                networking_get_gamepad(&gamepad);
-                if (gamepad.connected && gamepad.throttle > GAMEPAD_DEADBAND) {
-                    printf("ESC arm rejected: throttle must be zero\n");
+                if (!control_connected || (gamepad.connected && gamepad.throttle > GAMEPAD_DEADBAND)) {
+                    printf("ESC arm rejected: live browser and zero throttle required\n");
                     networking_set_esc_arm_request(false);
                 } else {
                     arm_ESC();
@@ -135,10 +147,19 @@ void main_loop() {
         float pitch_cmd = 0.0f;
         float roll_cmd = 0.0f;
         float yaw_cmd = 0.0f;
-        if (networking_gamepad_ready()) {
-            networking_gamepad_t gamepad = {0};
-            networking_get_gamepad(&gamepad);
-
+        float motor_mix[4] = {0};
+        networking_get_gamepad(&gamepad);
+        control_connected = gamepad.ready &&
+                    time_us_64() - gamepad.last_update_us < GAMEPAD_TIMEOUT_US;
+        if (!control_connected) {
+            if (esc_is_armed() || arm_requested) {
+                disarm_ESC();
+                networking_set_esc_arm_request(false);
+                pid_reset(&roll_pid);
+                pid_reset(&pitch_pid);
+            }
+            esc_send_normalized(0.0f, 0.0f, 0.0f, 0.0f);
+        } else {
             if (gamepad.connected) {
                 throttle_cmd = clampf(gamepad.throttle, 0.0f, 1.0f);
                 pitch_cmd = apply_deadband(clampf(gamepad.pitch, -1.0f, 1.0f), GAMEPAD_DEADBAND);
@@ -156,6 +177,10 @@ void main_loop() {
             float m2 = throttle_cmd + pitch_mix - roll_mix - yaw_mix; // Front Left
             float m3 = throttle_cmd - pitch_mix + roll_mix - yaw_mix; // Rear Right
             float m4 = throttle_cmd - pitch_mix - roll_mix + yaw_mix; // Rear Left
+            motor_mix[0] = m1;
+            motor_mix[1] = m2;
+            motor_mix[2] = m3;
+            motor_mix[3] = m4;
             esc_send_normalized(m1, m2, m3, m4);
         }
 
@@ -173,6 +198,7 @@ void main_loop() {
             .yaw_deg = 0.0f,
             .pid_loop_hz = pid_loop_hz,
             .esc_armed = esc_is_armed(),
+            .motor_mix = {motor_mix[0], motor_mix[1], motor_mix[2], motor_mix[3]},
             .pitch_pid = {
                 .setpoint = pitch_pid.setpoint,
                 .measurement = pitch_pid.measurement,

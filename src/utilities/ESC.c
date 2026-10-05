@@ -10,9 +10,12 @@
 #define DSHOT_SPEED_KBAUD       600
 #define DSHOT_UPDATE_US         500   // 2kHz update rate
 #define DSHOT_THROTTLE_MAX       2000
+#define DSHOT_ARMING_FRAMES      4000
 
 static DShotX4 *g_esc = nullptr;
 static bool g_armed = false;
+static uint32_t g_arming_frames_remaining = 0;
+static uint64_t g_last_send_us = 0;
 
 static float clampf(float value, float min_value, float max_value) {
     if (value < min_value) {
@@ -50,23 +53,17 @@ void arm_ESC() {
         return;
     }
 
-    if (g_armed) {
+    if (g_armed || g_arming_frames_remaining != 0) {
         return;
     }
 
-    // Required DShot arming sequence: zero throttle held for a period before motors will spin.
-    for(int i = 0; i < 4000; i++) {
-        uint16_t throttles[4] = {0, 0, 0, 0};
-        g_esc->sendThrottles(throttles);
-        sleep_us(DSHOT_UPDATE_US);
-    }
-
-    g_armed = true;
-    printf("ESC armed\n");
+    g_arming_frames_remaining = DSHOT_ARMING_FRAMES;
+    printf("ESC arming\n");
 }
 
 void disarm_ESC() {
     g_armed = false;
+    g_arming_frames_remaining = 0;
 
     if (g_esc) {
         uint16_t throttles[4] = {0, 0, 0, 0};
@@ -85,16 +82,29 @@ void esc_send_normalized(float m1, float m2, float m3, float m4) {
         return;
     }
 
+    uint64_t now_us = time_us_64();
+    if (now_us - g_last_send_us < DSHOT_UPDATE_US) {
+        return;
+    }
+    g_last_send_us = now_us;
+
     uint16_t throttles[4] = {0, 0, 0, 0};
 
     // Refuse to send real throttle values until armed, regardless of caller intent.
     if (g_armed) {
         float motors[4] = {m1, m2, m3, m4};
         for (int i = 0; i < 4; ++i) {
-            float clamped = clampf(motors[i], 0.0f, 1.0f);
+            float clamped = clampf(motors[i], 0.0f, 0.30f);
             throttles[i] = (uint16_t)(clamped * (float)DSHOT_THROTTLE_MAX);
         }
     }
 
     g_esc->sendThrottles(throttles);
+    if (g_arming_frames_remaining != 0) {
+        --g_arming_frames_remaining;
+        if (g_arming_frames_remaining == 0) {
+            g_armed = true;
+            printf("ESC armed\n");
+        }
+    }
 }

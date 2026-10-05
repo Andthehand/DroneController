@@ -12,6 +12,7 @@
 #define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 #define WS_MAX_HANDSHAKE 1024
 #define WS_MAX_FRAME 512
+#define WS_MAX_TX_FRAME 1024
 #define WS_MAX_RX_BUFFER 1024
 
 typedef enum {
@@ -386,11 +387,11 @@ static bool ws_send_raw(const uint8_t *data, size_t len) {
 }
 
 static bool ws_send_frame(uint8_t opcode, const uint8_t *payload, size_t payload_len) {
-    if (payload_len > WS_MAX_FRAME) {
+    if (payload_len > WS_MAX_TX_FRAME) {
         return false;
     }
 
-    uint8_t frame[4 + WS_MAX_FRAME];
+    uint8_t frame[4 + WS_MAX_TX_FRAME];
     size_t header_len = 2;
     frame[0] = 0x80u | (opcode & 0x0Fu);
     if (payload_len <= 125) {
@@ -454,7 +455,7 @@ static void ws_close_client(void) {
 
     printf("WS closing client\n");
     networking_set_esc_arm_request(false);
-    networking_set_gamepad(0.0f, 0.0f, 0.0f, 0.0f, 0u, false);
+    networking_clear_gamepad();
 
     if (s_client->pcb) {
         tcp_arg(s_client->pcb, NULL);
@@ -766,6 +767,7 @@ static void ws_error(void *arg, err_t err) {
     printf("WS async error: %d\n", (int)err);
     ws_client_t *client = (ws_client_t *)arg;
     if (client && client == s_client) {
+        networking_clear_gamepad();
         mem_free(s_client);
         s_client = NULL;
     }
@@ -817,11 +819,12 @@ void ws_server_broadcast_telemetry(const networking_telemetry_t *telemetry,
     static uint32_t seq = 0;
     bool arm_requested = false;
     networking_get_esc_arm_request(&arm_requested, NULL);
-    char json[512];
+    char json[WS_MAX_TX_FRAME];
     int len = snprintf(
         json,
         sizeof(json),
         "{\"t\":\"telemetry\",\"seq\":%lu,\"pitch\":%.2f,\"roll\":%.2f,\"yaw\":%.2f,\"pidLoopHz\":%.1f,\"armed\":%s,\"armRequested\":%s,"
+        "\"motors\":[%.3f,%.3f,%.3f,%.3f],"
         "\"pid\":{\"roll\":{\"sp\":%.2f,\"pv\":%.2f,\"err\":%.2f,\"out\":%.3f,\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},"
         "\"pitch\":{\"sp\":%.2f,\"pv\":%.2f,\"err\":%.2f,\"out\":%.3f,\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f}}}",
         (unsigned long)seq++,
@@ -831,6 +834,10 @@ void ws_server_broadcast_telemetry(const networking_telemetry_t *telemetry,
         telemetry->pid_loop_hz,
         telemetry->esc_armed ? "true" : "false",
         arm_requested ? "true" : "false",
+        telemetry->motor_mix[0],
+        telemetry->motor_mix[1],
+        telemetry->motor_mix[2],
+        telemetry->motor_mix[3],
         telemetry->roll_pid.setpoint,
         telemetry->roll_pid.measurement,
         telemetry->roll_pid.error,
