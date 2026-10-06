@@ -16,14 +16,33 @@ When working in this repo, prefer small, testable firmware changes and keep hard
 
 ## Hardware Map
 
-### BMI270 IMU
+### LSM6DSV32X IMU
 
-The BMI270 is connected on `spi0` and the current driver already expects this pinout:
+The active LSM6DSV32X driver uses `spi1` with this pinout:
 
-- GPIO 2: SPI0 RX / MISO
-- GPIO 3: SPI0 TX / MOSI
-- GPIO 4: SPI0 SCK
-- GPIO 5: BMI270 chip select
+- GPIO 12: SPI1 RX / MISO
+- GPIO 11: SPI1 TX / MOSI
+- GPIO 10: SPI1 SCK
+- GPIO 13: IMU chip select
+- GPIO 14: INT2 input, currently not used for sampling
+
+### IMU Filtering
+
+- Both sensors run at a nominal 1.92 kHz. The controller polls STATUS_REG (0x1E), requiring both accelerometer and gyro data-ready bits before reading a sample.
+- Data-ready status is polled rather than waiting a fixed 1 ms. `CONTROL_LOOP_INTERVAL_US` does not govern this path; actual throughput needs verification on hardware.
+- All three gyro and accelerometer axes pass through second-order Butterworth low-pass filters before the Kalman attitude estimator. Raw integer samples remain unchanged.
+- `IMU_GYRO_LPF_HZ` defaults to 100 Hz and `IMU_ACCEL_LPF_HZ` to 30 Hz in `src/config.h`. Setting either cutoff to zero bypasses that software filter. The existing internal gyro filter remains enabled.
+- Coefficients use the measured interval between fresh reads to accommodate polling jitter and missed samples. The first sample seeds filter history; startup/recovery uses the nominal sample interval.
+- `IMU_POLL_INTERVAL_US` is 50 us while waiting for data. `IMU_SAMPLE_TIMEOUT_US` is 10000 us. Read failures or stale samples disarm outputs, clear the arm request, and reset filter/PID state. Recovery requires a new explicit arm request.
+- These are bench starting settings, not flight-certified tuning. Lower cutoffs add control delay; filtering cannot repair clipping, aliased noise, or mechanical imbalance.
+
+Bench verification:
+
+1. Remove propellers before powering motors. Check for loose mounting and damaged motors/props; use suitable controller vibration isolation.
+2. Confirm startup tilt is stable and manually tilting the board still produces prompt, correctly signed roll/pitch changes.
+3. With motors off, establish a tilt-noise baseline. Compare with motors running at several low throttle settings and check the reported PID rate while control is connected. Fresh-sample processing should not exceed the nominal 1920 Hz sensor rate on average.
+4. Verify sensor-failure disarming on a controlled bench before flight. Restore samples, confirm motors stay disarmed, and explicitly re-arm at zero throttle.
+5. If vibration remains, capture raw sensor data and a frequency spectrum before choosing notch frequencies or changing cutoffs. Props-off testing does not reproduce propeller-loaded vibration; PID stability and real sample timing remain hardware validation requirements.
 
 ### ESC / Motor Outputs
 
@@ -100,7 +119,7 @@ Notes:
 
 These assumptions are currently based on project notes and existing code:
 
-- The BMI270 uses SPI, not I2C.
+- The active LSM6DSV32X uses SPI, not I2C.
 - GPIO 18 current sense is likely analog input from the ESC.
 - The referenced ESC documentation is the SpeedyBee F405 V4 BLS 55A 30x30 stack manual/product page.
 
@@ -110,7 +129,7 @@ If any of those are wrong, update this file before building more features on top
 
 - Whether current sense on GPIO 18 needs ADC scaling and what the calibration constant is
 - Battery chemistry and expected voltage range
-- Required control loop rate and IMU filter strategy
+- Sustained fresh-sample loop rate and IMU filter tuning under real motor vibration
 - Final Wi-Fi operating mode: station, access point, or both
 
 ## Reference Documentation

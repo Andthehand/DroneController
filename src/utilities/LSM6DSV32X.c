@@ -24,10 +24,13 @@
 #define LSM6_REG_CTRL6    0x15
 #define LSM6_REG_CTRL7    0x16
 #define LSM6_REG_CTRL8    0x17
+#define LSM6_REG_STATUS   0x1E
 #define LSM6_REG_OUTX_L_G 0x22
 #define LSM6_REG_OUTX_L_A 0x28
 
 #define LSM6_READ_MASK 0x80
+#define LSM6_STATUS_ACCEL_READY (1u << 0)
+#define LSM6_STATUS_GYRO_READY  (1u << 1)
 
 #define LSM6_WHO_AM_I_EXPECTED 0x70
 
@@ -145,6 +148,20 @@ bool lsm6dsv32x_init(void) {
 	}
 
 	s_initialized = true;
+	return true;
+}
+
+bool lsm6dsv32x_data_ready(bool *ready) {
+	if (ready == NULL) {
+		return false;
+	}
+	*ready = false;
+	uint8_t status = 0;
+	if (!s_initialized || !lsm6_read_regs(LSM6_REG_STATUS, &status, 1)) {
+		return false;
+	}
+	uint8_t required = LSM6_STATUS_ACCEL_READY | LSM6_STATUS_GYRO_READY;
+	*ready = (status & required) == required;
 	return true;
 }
 
